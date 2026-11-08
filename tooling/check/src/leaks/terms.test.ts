@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadTerms, parseTermList, TermMatcher } from "./terms.ts";
+import { loadTerms, normalise, parseTermList, TermMatcher } from "./terms.ts";
 import { testTerms } from "./test-values.ts";
 
 // Made-up stand-in terms: the real list never enters the repo.
@@ -16,6 +16,18 @@ describe("TermMatcher", () => {
     expect(matcher.matches(`${single}s`)).toBe(true);
     expect(matcher.matches(`const load${single}Data = 1;`)).toBe(true);
     expect(matcher.matches(`pre_${single.toLowerCase()}_post`)).toBe(true);
+  });
+
+  it("sees through look-alike spellings", () => {
+    const [first = "", second = ""] = multiWord.split(" ");
+    const withEscape = `${first}%20${second}`;
+    const fullWidth = single.replace(/[a-z]/gi, (letter) =>
+      String.fromCodePoint(letter.toLowerCase().charCodeAt(0) + 0xfee0),
+    );
+    const withInvisibleCharacter = `${single.slice(0, 2)}\u200b${single.slice(2)}`;
+    for (const disguised of [withEscape, fullWidth, withInvisibleCharacter]) {
+      expect(matcher.matches(disguised)).toBe(true);
+    }
   });
 
   it("matches a multi-word term with any separator or none", () => {
@@ -41,6 +53,13 @@ describe("TermMatcher", () => {
   it("is empty when no terms are configured", () => {
     expect(new TermMatcher([]).isEmpty).toBe(true);
     expect(new TermMatcher(["  ", "--"]).isEmpty).toBe(true);
+  });
+});
+
+describe("normalise", () => {
+  it("decodes percent escapes, and replaces broken ones with a space", () => {
+    expect(normalise("a%20b")).toBe("a b");
+    expect(normalise("a%E0%A4b")).toBe("a b");
   });
 });
 

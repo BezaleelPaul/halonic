@@ -73,10 +73,10 @@ jobs:
         with:
           node-version: "26"
           package-manager-cache: false
-      - name: Personal-terms guard over every file and commit
+      - name: Leak guard over every file and commit
         env:
           HALONIC_DENY_TERMS: ${{ secrets.HALONIC_DENY_TERMS }}
-        run: node tooling/check/src/cli/terms.ts --all
+        run: node tooling/check/src/cli/leaks.ts --all
       - name: gitleaks over the whole history
         uses: $/.github/actions/gitleaks
 
