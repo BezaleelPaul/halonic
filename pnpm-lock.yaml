@@ -269,6 +269,9 @@ importers:
 
   packages/core/events:
     devDependencies:
+      '@halonicjs/testing-spec':
+        specifier: workspace:*
+        version: link:../../testing/spec
       '@halonicjs/tooling-config':
         specifier: workspace:*
         version: link:../../../tooling/config
@@ -309,6 +312,9 @@ importers:
         specifier: workspace:*
         version: link:../events
     devDependencies:
+      '@halonicjs/testing-spec':
+        specifier: workspace:*
+        version: link:../../testing/spec
       '@halonicjs/tooling-config':
         specifier: workspace:*
         version: link:../../../tooling/config
