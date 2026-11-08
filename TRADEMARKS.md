@@ -1,8 +1,8 @@
 # Trademarks
 
 Halonic's code is open source under the [Apache License 2.0](LICENSE). The name
-**Halonic** and the Halonic logo are not. They are trademarks of Korse Holding,
-and the licence gives no rights to them (section 6 of the licence says so).
+**Halonic** and the Halonic logo are not. They are trademarks of the Halonic
+project, and the licence gives no rights to them (section 6 of the licence says so).
 
 This page explains what that means in practice. In short: use the code however
 the licence allows, and use the name only to say truthfully what something is.
@@ -28,15 +28,15 @@ nobody mistakes it for ours. In particular:
   Halonic", as long as that is true and doesn't suggest we made or endorse it.
 - Redistribute the official, unmodified releases under their own name.
 - Use the name in the name of a community group or event, if it's clear that it
-  isn't run by Korse Holding.
+  isn't run by the Halonic project.
 
 ## What needs our permission
 
 - Offering Halonic as a hosted or managed service under the Halonic name.
 - Using the name or logo in a product name, company name or domain name.
 - Selling merchandise with the name or logo.
-- Anything that suggests Korse Holding made, endorses or supports something it
-  didn't.
+- Anything that suggests the Halonic project made, endorses or supports
+  something it didn't.
 
 To ask, open a discussion in this repository.
 
