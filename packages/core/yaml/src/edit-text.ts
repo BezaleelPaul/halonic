@@ -22,6 +22,11 @@ export function columnOf(text: string, offset: number): number {
   return offset - lineStart(text, offset);
 }
 
+/** True when only spaces come before `offset` on its line. */
+export function startsItsLine(text: string, offset: number): boolean {
+  return text.slice(lineStart(text, offset), offset).trim() === "";
+}
+
 /**
  * Where the entry whose value ends at `valueEnd` ends: after its line break,
  * so a trailing `# comment` goes with it. Block collections already end after
@@ -33,6 +38,54 @@ export function entryEnd(text: string, valueEnd: number): number {
   }
   const lineBreak = text.indexOf("\n", valueEnd);
   return lineBreak === -1 ? text.length : lineBreak + 1;
+}
+
+/** Moves `offset` (a line start) up over the comment lines right above it. */
+export function aboveComments(text: string, offset: number): number {
+  let start = offset;
+  while (start > 0) {
+    const previous = lineStart(text, start - 1);
+    if (!text.slice(previous, start).trim().startsWith("#")) {
+      break;
+    }
+    start = previous;
+  }
+  return start;
+}
+
+/**
+ * True when every comment line of `before`, outside `before[from, to)`, is
+ * still a line of `after`.
+ */
+export function keepsComments(before: string, from: number, to: number, after: string): boolean {
+  const left = new Map<string, number>();
+  for (const line of commentLines(after)) {
+    left.set(line, (left.get(line) ?? 0) + 1);
+  }
+  return commentLines(before.slice(0, from) + before.slice(to)).every((line) => {
+    const count = left.get(line) ?? 0;
+    left.set(line, count - 1);
+    return count > 0;
+  });
+}
+
+/**
+ * Removes the lines from `from` to `to` (both line starts). When blank lines
+ * sat on both sides, one of them goes too, so two sections stay one blank
+ * line apart instead of two.
+ */
+export function removeLines(text: string, from: number, to: number): string {
+  const lineBefore = from > 0 ? lineStart(text, from - 1) : from;
+  const blankBefore = from > 0 && isBlank(text.slice(lineBefore, from));
+  if (blankBefore && to === text.length) {
+    // The last entry of the file: don't leave a blank line at the end.
+    return text.slice(0, lineBefore);
+  }
+  const lineAfter = text.indexOf("\n", to);
+  const lineAfterEnd = lineAfter === -1 ? text.length : lineAfter + 1;
+  const blankAfter = to < text.length && isBlank(text.slice(to, lineAfterEnd));
+  const end = blankBefore && blankAfter ? lineAfterEnd : to;
+  return text.slice(0, from) + text.slice(end);
 }
 
 /** Inserts whole lines at a line start; at the end of a text without a final line break, adds one first. */
@@ -56,6 +109,11 @@ export function replaceRange(text: string, from: number, to: number, rendered: s
 /** `key: value` as whole lines, indented to `column`. Keys are quoted by the library, never pasted. */
 export function renderPair(key: string, value: unknown, column: number): string {
   return indent(render({ [key]: value }, column), column, true);
+}
+
+/** `- value` as whole lines, indented to `column`. */
+export function renderItem(value: unknown, column: number): string {
+  return indent(render([value], column), column, true);
 }
 
 /**
@@ -109,4 +167,16 @@ function indent(text: string, column: number, firstLineToo: boolean): string {
     .split("\n")
     .map((line, index) => (line === "" || (index === 0 && !firstLineToo) ? line : pad + line))
     .join("\n");
+}
+
+/** The lines that hold only a comment, without their indent. */
+function commentLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("#"));
+}
+
+function isBlank(line: string): boolean {
+  return line.trim() === "";
 }

@@ -149,3 +149,27 @@ verifies("yaml.edit-preserve", () => {
     }
   });
 });
+
+verifies("yaml.edit-preserve-entries", () => {
+  it.each(exampleFiles)(
+    "removes only the key's lines when a top-level key of $name is deleted",
+    ({ text }) => {
+      const data = unwrap(readYaml(text)).data;
+      const keys = Object.keys(data as Record<string, unknown>);
+      const lines = text.split("\n");
+      for (const key of keys) {
+        const after = expectKept(text, data, { kind: "delete", path: [key] });
+        if (keys.length === 1) {
+          // The only key: `{}` takes its place, under the comments at the top.
+          const firstKeyLine = lines.findIndex((line) => line.startsWith(key));
+          expect(after).toBe(`${lines.slice(0, firstKeyLine).join("\n")}\n{}\n`);
+          continue;
+        }
+        // What's left is the old text with one run of lines taken out.
+        const changes = changedLines(lines, after);
+        const removed = changes.last - changes.first + 1;
+        expect(after.split("\n").length).toBe(lines.length - removed);
+      }
+    },
+  );
+});

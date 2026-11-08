@@ -12,15 +12,21 @@ import {
   type YAMLSeq,
 } from "yaml";
 import {
+  aboveComments,
   columnOf,
   entryEnd,
   insertLines,
+  keepsComments,
+  lineStart,
+  removeLines,
   renderAfterDash,
   renderAfterKey,
   renderDocument,
+  renderItem,
   renderPair,
   renderScalar,
   replaceRange,
+  startsItsLine,
 } from "./edit-text.ts";
 import type { YamlPath } from "./read.ts";
 
@@ -147,6 +153,134 @@ export function addPair(
     at,
     renderPair(key, value, columnOf(parsed.text, first.range[0])),
   );
+}
+
+/** Inserts `- value` into the block list at `listPath`, above the comments over item `index`. */
+export function insertItem(
+  parsed: Parsed,
+  listPath: YamlPath,
+  index: number,
+  value: unknown,
+): string | undefined {
+  const { text } = parsed;
+  const list = nodeAt(parsed, listPath);
+  if (!isSeq(list)) {
+    return undefined;
+  }
+  if (list.flow === true) {
+    return list.items.length === 0 ? replaceValue(parsed, listPath, [value]) : undefined;
+  }
+  const atEnd = index === list.items.length;
+  const dash = dashOffset(list, atEnd ? index - 1 : index);
+  if (dash === undefined) {
+    return undefined;
+  }
+  const column = columnOf(text, dash);
+  if (atEnd) {
+    const lastEnd = (list.items[index - 1] as Node | null)?.range?.[1];
+    const lines = renderItem(value, column);
+    return lastEnd === undefined ? undefined : insertLines(text, entryEnd(text, lastEnd), lines);
+  }
+  if (!startsItsLine(text, dash)) {
+    // The first item of a list on a `- ` line (`- - a`): the new item takes
+    // that place and the old one moves to the next line.
+    const item = `${renderAfterDash(value, column)}${" ".repeat(column)}`;
+    return text.slice(0, dash) + item + text.slice(dash);
+  }
+  return insertLines(text, aboveComments(text, lineStart(text, dash)), renderItem(value, column));
+}
+
+/** Removes the lines of the entry at `path`. The last entry leaves `{}` or `[]` behind. */
+export function deleteEntry(parsed: Parsed, path: YamlPath): string | undefined {
+  const parentPath = path.slice(0, -1);
+  const parent = nodeAt(parsed, parentPath);
+  const key = path[path.length - 1] as string | number;
+  if (!isCollection(parent) || parent.flow === true) {
+    return undefined;
+  }
+  if (parent.items.length === 1) {
+    return emptyCollection(parsed, parentPath, parent, key);
+  }
+  if (isMap(parent)) {
+    return deletePair(parsed, parent, key);
+  }
+  if (isSeq(parent) && typeof key === "number") {
+    return deleteItem(parsed, parent, key);
+  }
+  return undefined;
+}
+
+/**
+ * Writes `{}` or `[]` in place of a collection whose only entry goes. The
+ * comment lines right above that entry stay, under the `{}` or `[]`; when any
+ * other comment would go with it, this gives up.
+ */
+function emptyCollection(
+  parsed: Parsed,
+  path: YamlPath,
+  collection: YAMLMap | YAMLSeq,
+  key: string | number,
+): string | undefined {
+  const { text } = parsed;
+  const entry = isMap(collection) ? pairOf(collection, key) : undefined;
+  const start = isMap(collection)
+    ? (entry?.key as Node | undefined)?.range?.[0]
+    : dashOffset(collection, 0);
+  const valueEnd =
+    entry !== undefined ? pairEnd(entry) : (collection.items[0] as Node | null)?.range?.[1];
+  const end = collection.range?.[1];
+  const emptied = replaceValue(parsed, path, isMap(collection) ? {} : []);
+  if (start === undefined || valueEnd === undefined || end === undefined || emptied === undefined) {
+    return undefined;
+  }
+  const from = startsItsLine(text, start) ? lineStart(text, start) : start;
+  // At the top the comments above the first entry aren't replaced, so they stay anyway.
+  const above =
+    path.length > 0 && from !== start ? text.slice(aboveComments(text, from), from) : "";
+  const at = emptied.length - (text.length - end);
+  if (at < emptied.length && emptied[at - 1] !== "\n") {
+    return undefined;
+  }
+  const result = above === "" ? emptied : insertLines(emptied, at, above);
+  return keepsComments(text, from, entryEnd(text, valueEnd), result) ? result : undefined;
+}
+
+function deletePair(parsed: Parsed, map: YAMLMap, key: string | number): string | undefined {
+  const { text } = parsed;
+  const pair = pairOf(map, key);
+  const start = (pair?.key as Node | undefined)?.range?.[0];
+  if (pair === undefined || start === undefined) {
+    return undefined;
+  }
+  const end = entryEnd(text, pairEnd(pair));
+  if (startsItsLine(text, start)) {
+    return removeLines(text, lineStart(text, start), end);
+  }
+  // The first key of a map on a `- ` line: the next key moves up to its place.
+  const next = (map.items[1]?.key as Node | undefined)?.range?.[0];
+  if (map.items[0] !== pair || next === undefined || text.slice(end, next).includes("#")) {
+    return undefined;
+  }
+  return text.slice(0, start) + text.slice(next);
+}
+
+function deleteItem(parsed: Parsed, list: YAMLSeq, index: number): string | undefined {
+  const { text } = parsed;
+  const dash = dashOffset(list, index);
+  const end = (list.items[index] as Node | null)?.range?.[1];
+  if (dash === undefined || end === undefined) {
+    return undefined;
+  }
+  if (startsItsLine(text, dash)) {
+    return removeLines(text, lineStart(text, dash), entryEnd(text, end));
+  }
+  // The first item of a list on a `- ` line: the next item moves up to its place.
+  const next = dashOffset(list, 1);
+  const lineEnd = entryEnd(text, end);
+  if (index !== 0 || next === undefined || text.slice(lineEnd, next).includes("#")) {
+    return undefined;
+  }
+  return text.slice(0, dash) + text.slice(next);
 }
 
 function childNode(node: unknown, key: string | number): unknown {
