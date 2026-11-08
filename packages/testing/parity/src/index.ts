@@ -14,6 +14,15 @@ export {
   type ParityCase,
   readCase,
 } from "./cases.ts";
+export {
+  type Comparison,
+  compareFile,
+  type NewProblem,
+  type NewResult,
+  type Problem,
+  type Side,
+} from "./compare/compare.ts";
+export { type FileCheck, fileChecks, placeIdOf } from "./compare/file-checks.ts";
 export { composeWorkspace } from "./compose.ts";
 export { cloneProblems, oldEnvironment, oldTsx, referenceHash } from "./old-repo.ts";
 export {
