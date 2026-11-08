@@ -30,6 +30,54 @@ describe("secret rules", () => {
     expect(secretRulesHit(`hash = "${filler(40)}"`)).toEqual([]);
   });
 
+  it.each(["client_secret", "refresh_token", "access_token", "id_token", "code_verifier"])(
+    "finds a literal value in %s, quoted or in a form body",
+    (name) => {
+      expect(secretRulesHit(`{ "${name}": "${filler(40)}" }`)).toEqual(["oauth-field"]);
+      expect(secretRulesHit(`${name} = '${filler(40)}'`)).toEqual(["oauth-field"]);
+      expect(secretRulesHit(`grant_type=refresh_token&${name}=${filler(40)}`)).toEqual([
+        "oauth-field",
+      ]);
+    },
+  );
+
+  it("lets an OAuth field that holds a variable or a template through", () => {
+    expect(secretRulesHit("access_token: tokens.accessTokenFromGoogle,")).toEqual([]);
+    expect(secretRulesHit("refresh_token = current.refreshTokenValue")).toEqual([]);
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: a template, written literally
+    expect(secretRulesHit("body: `client_secret=${clientSecretFromStore}`")).toEqual([]);
+  });
+
+  it("finds an authorization code in a token request, before or after the grant type", () => {
+    const code = filler(40);
+    expect(secretRulesHit(`grant_type=authorization_code&code=${code}`)).toEqual(["oauth-code"]);
+    expect(secretRulesHit(`code=${code}&grant_type=authorization_code`)).toEqual(["oauth-code"]);
+    expect(secretRulesHit(`{"grant_type": "authorization_code", "code": "${code}"}`)).toEqual([
+      "oauth-code",
+    ]);
+    expect(secretRulesHit(`{"code": "${code}", "grant_type": "authorization_code"}`)).toEqual([
+      "oauth-code",
+    ]);
+  });
+
+  it("lets code through outside a query string and a token request", () => {
+    const code = filler(40);
+    expect(secretRulesHit(`{ "code": "${code}" }`)).toEqual([]);
+    expect(secretRulesHit(`error_code=${code}`)).toEqual([]);
+    expect(secretRulesHit("{ grant_type: GRANT, code: authorizationCodeFromCallback }")).toEqual(
+      [],
+    );
+  });
+
+  it("checks a long line after code quickly", () => {
+    // Without a token request on the line, the rule must give up on the value
+    // once, not once per character: that would take seconds on a minified file.
+    const line = `code="${filler(50_000)}`;
+    const start = performance.now();
+    expect(secretRulesHit(line)).toEqual([]);
+    expect(performance.now() - start).toBeLessThan(500);
+  });
+
   it("masks a secret down to its prefix and length", () => {
     const value = fakeSecrets["github-token"] ?? "";
     const masked = maskSecret("github-token", value);
