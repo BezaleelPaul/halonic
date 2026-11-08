@@ -1,9 +1,5 @@
-import {
-  type Clock,
-  compactedChanges,
-  type RecordChange,
-  type RecordStore,
-} from "@halonicjs/ports";
+import { MemoryRecordStore } from "@halonicjs/adapter-memory";
+import type { Clock, RecordChange } from "@halonicjs/ports";
 import type { SetTimer } from "./set-timer.ts";
 
 /** The start of every fake clock: 2026-01-01T00:00:00Z. */
@@ -68,33 +64,27 @@ export class ManualTimers {
 }
 
 /**
- * A record store in memory, for these tests only, until the shared memory
- * adapter lands on `main`. `failNextAppend` makes the next write reject.
+ * The shared in-memory record store, with two additions for tests:
+ * `failNextAppend` makes the next write reject, and `failNextCompact` the
+ * next compaction.
  */
-export class MemoryRecordStore implements RecordStore {
-  #changes: RecordChange[] = [];
+export class FlakyRecordStore extends MemoryRecordStore {
   failNextAppend = false;
+  failNextCompact = false;
 
-  async append(changes: readonly RecordChange[]): Promise<void> {
+  override async append(changes: readonly RecordChange[]): Promise<void> {
     if (this.failNextAppend) {
       this.failNextAppend = false;
       throw new Error("the record store is unavailable");
     }
-    this.#changes.push(...changes.map((change) => structuredClone(change)));
+    await super.append(changes);
   }
 
-  async changes(collection: string): Promise<RecordChange[]> {
-    return this.#changes
-      .filter((change) => change.collection === collection)
-      .map((change) => structuredClone(change));
-  }
-
-  async compact(collection: string): Promise<void> {
-    const kept = this.#changes.filter((change) => change.collection !== collection);
-    const compacted = compactedChanges(
-      collection,
-      this.#changes.filter((change) => change.collection === collection),
-    );
-    this.#changes = [...kept, ...compacted];
+  override async compact(collection: string): Promise<void> {
+    if (this.failNextCompact) {
+      this.failNextCompact = false;
+      throw new Error("the record store is unavailable");
+    }
+    await super.compact(collection);
   }
 }

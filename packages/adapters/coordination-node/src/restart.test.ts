@@ -63,6 +63,47 @@ verifies("coordination-node.restart", () => {
       expect(changes.map((change) => change.op)).toEqual(["add", "update"]);
     });
 
+    it("removes leases that ran out and compacts the log when it starts", async () => {
+      const world = newWorld();
+      const before = startCoordination(world).coordination;
+      await before.tryAcquire("ran-out", 1_000);
+      const released = await before.tryAcquire("released", 60_000);
+      if (released === null) throw new Error("no lease");
+      await before.release(released);
+      await before.compareAndSet("gone", null, "x");
+      await before.compareAndSet("gone", "x", null);
+      for (let round = 0; round < 3; round += 1) await before.increment("budget", 1);
+      world.clock.advance(1_000);
+
+      const after = startCoordination(world).coordination;
+      // Any call waits for the start, so the clean-up has run once it answers.
+      expect(await after.read("cursor")).toBeNull();
+      const changes = await world.store.changes(defaultCoordinationCollection);
+      expect(changes).toMatchObject([
+        { op: "seed", id: '["counter","budget"]', values: { kind: "counter", value: 3 } },
+      ]);
+      expect(await after.tryAcquire("ran-out", 1_000)).not.toBeNull();
+    });
+
+    it.each([
+      ["removing the leases that ran out", "failNextAppend"],
+      ["compacting", "failNextCompact"],
+    ] as const)(
+      "still starts from the state it read when the store fails %s",
+      async (_, failure) => {
+        const world = newWorld();
+        const before = startCoordination(world).coordination;
+        await before.tryAcquire("ran-out", 1_000);
+        await before.increment("budget", 3);
+        world.clock.advance(1_000);
+
+        world.store[failure] = true;
+        const after = startCoordination(world).coordination;
+        expect(await after.increment("budget", 1)).toEqual({ applied: true, value: 4 });
+        expect(await after.tryAcquire("ran-out", 1_000)).not.toBeNull();
+      },
+    );
+
     it("rejects a call and changes nothing when the store fails the write", async () => {
       const { coordination, store } = startCoordination();
       await coordination.increment("budget", 1);
@@ -85,6 +126,9 @@ verifies("coordination-node.restart", () => {
       const { coordination } = startCoordination(world);
       await expect(coordination.read("cursor")).rejects.toThrow('["counter","budget"]');
       await expect(coordination.increment("budget", 1)).rejects.toThrow("not a lease");
+      expect(await world.store.changes(defaultCoordinationCollection)).toMatchObject([
+        { op: "add" },
+      ]);
     });
   });
 });

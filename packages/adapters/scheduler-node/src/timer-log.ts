@@ -4,7 +4,7 @@ import { fromRecordValues, type StoredTimer, timerSlot, toRecordValues } from ".
 /**
  * The scheduler's timers as records in a {@link RecordStore} collection, one
  * record per key and timer id. The store keeps a log of changes, so loading
- * folds the log into the current timers.
+ * folds the log into the current timers and then compacts it.
  */
 export class TimerLog {
   readonly #store: RecordStore;
@@ -18,7 +18,10 @@ export class TimerLog {
   }
 
   /**
-   * The timers the log holds now, by {@link timerSlot}.
+   * The timers the log holds now, by {@link timerSlot}. The log is compacted,
+   * so delivered, cancelled and replaced timers leave the store. Compacting
+   * is best effort: when the store fails it, the timers read are still
+   * returned. A log with a record that isn't a timer is left as it is.
    *
    * @throws Error naming the record when a record isn't a timer this scheduler wrote
    */
@@ -29,7 +32,17 @@ export class TimerLog {
       const stored = fromRecordValues(recordId, values);
       timers.set(timerSlot(stored.timer.key, stored.timer.timerId), stored);
     }
+    await this.#compact();
     return timers;
+  }
+
+  /** Compacts the log. A failure is not passed on: the timers are already read. */
+  async #compact(): Promise<void> {
+    try {
+      await this.#store.compact(this.#collection);
+    } catch {
+      // The store is left for the next start to compact.
+    }
   }
 
   /** Records a timer that is new (`isNew`) or replaces the one with the same key and id. */
