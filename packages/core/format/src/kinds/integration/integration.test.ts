@@ -191,6 +191,22 @@ verifies("format.integration-file", () => {
     ]);
   });
 
+  it("refuses an empty tool or argument description", () => {
+    const text = yaml(
+      ...base,
+      "tools:",
+      "  - name: forecast",
+      "    description: ''",
+      "    arguments: { city: '' }",
+      "    risk: read",
+      "    untrusted: false",
+    );
+    expect(summary(problemsOf("integration", text))).toEqual([
+      "tools.0.description too_small 8",
+      "tools.0.arguments.city too_small 9",
+    ]);
+  });
+
   it("refuses a token with a bad name and a need it doesn't know", () => {
     const text = yaml(...base, "tokens:", "  - { name: Refresh, purpose: p }", "needs: [network]");
     expect(summary(problemsOf("integration", text))).toEqual([
@@ -261,6 +277,9 @@ verifies("format.integration-file", () => {
     "request.body",
     "response.body[*].data.result.content[*].text",
     "response.body.owners[*].*",
+    "response.body.*",
+    "response.body.*.name",
+    "response.body.data.*.*",
     "response.body.items[0].name",
     "request.query.q",
   ])("takes the recorder path %s", (path) => {
@@ -276,6 +295,10 @@ verifies("format.integration-file", () => {
     "request.bodytext",
     "response.body.items[x]",
     "response.body..text",
+    "response.body.a*b",
+    "response.body.a b",
+    "response.body.*x",
+    "response.body.**",
     "request.query.*",
     "request.query.q.more",
     "response.query.q",
