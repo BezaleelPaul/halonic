@@ -20,9 +20,18 @@ export interface ConnectorTool {
   description: string;
   /** JSON Schema of the arguments object. */
   parameters: Record<string, unknown>;
-  /** What calling it can do. Absent means unknown: treat it as `write`. */
+  /**
+   * What calling it can do. Absent means unknown: treat it as `write`. The
+   * host ignores it for a tool an `http` or `stdio` connector lists (see
+   * {@link ConnectorClient.listTools}).
+   */
   risk?: ToolRisk;
-  /** Whether its result carries outside content (mail, web pages), which the engine fences off. */
+  /**
+   * Whether its result carries outside content (mail, web pages), which the
+   * engine fences off. It covers the result only. For a tool an `http` or
+   * `stdio` connector lists, the host fences everything anyway (see
+   * {@link ConnectorClient.listTools}).
+   */
   untrusted?: boolean;
 }
 
@@ -32,6 +41,14 @@ export interface ConnectorClient {
   readonly id: string;
   /**
    * The tools the connector offers now. Connects on the first call.
+   *
+   * For an `http` or `stdio` connector, a server the workspace chose wrote
+   * these tools. The host rebuilds their parameters from an allow-list,
+   * fences off their descriptions and results as untrusted text, treats
+   * their `risk` as `write` unless the workspace sets a lower one, and
+   * refuses tools that are too large or whose names it can't check
+   * (requirement `ports.untrusted-tool-listings`).
+   * Don't fence them here, and don't mark them trusted.
    *
    * @throws when the connector can't be reached or started
    */
