@@ -1,5 +1,6 @@
 import {
   type GoogleCheckAnswer,
+  isApiHost,
   readGoogleCheckAnswer,
   type ServiceCheckOutcome,
   type ServiceResult,
@@ -14,33 +15,82 @@ import { parseJson } from "./json.ts";
 export const googleCheckTimeoutMs = 10_000;
 
 /**
+ * Google's shared host for older APIs. Drive's check, for one, goes to
+ * `www.googleapis.com/drive/v3/…` although its sheet lists `drive.googleapis.com`.
+ */
+const sharedApiHost = "www.googleapis.com";
+
+/**
+ * Hosts that never count as a service's own API, even when its sheet lists
+ * them: Cloud Storage's, where anyone can have a bucket (HAL-1226), and the
+ * shared host, which serves many APIs and so needs the path rule.
+ */
+const neverServiceApiHosts: ReadonlySet<string> = new Set([
+  "storage.googleapis.com",
+  sharedApiHost,
+]);
+
+/**
  * Refuses a `googleCheck` URL the access token must not go to. Only the
- * parsed URL is checked, so `https://googleapis.com.example.com` or
+ * parsed URL is checked, so `https://gmail.googleapis.com.example.com` or
  * `https://x@example.com/` can't pass as Google:
  * - the protocol is `https:`;
- * - the host is `googleapis.com` or ends in `.googleapis.com`;
+ * - the host is one of the service's own API hosts: a `googleApis` entry
+ *   that is a Google API host (`<name>.googleapis.com`), other than Cloud
+ *   Storage's. A sheet that lists `evil.example.com` or `googleapis.com`
+ *   gives it nothing (HAL-1351);
+ * - or the host is `www.googleapis.com` and the path starts with the name
+ *   of one of those APIs, such as `/drive/` for `drive.googleapis.com`, so
+ *   the shared host can't reach another API, such as `/storage/v1/…`;
  * - there is no user name or password and no port other than the default.
  *
- * The sheet check in the integrations repo already allows only Google URLs,
- * so this only fails on a sheet that skipped it.
+ * The sheet check in the integrations repo already limits the URL to the
+ * sheet's `hosts`; this also keeps it on the service's Google APIs.
  *
+ * @param url - the service's `googleCheck` URL
+ * @param service - the service whose check it is
  * @throws RangeError when the URL is refused. The message doesn't quote it.
  */
-export function checkGoogleCheckUrl(url: string): URL {
+export function checkGoogleCheckUrl(url: string, service: SetupService): URL {
   const parsed = URL.parse(url);
-  const isGoogleApi =
+  const isServiceApi =
     parsed !== null &&
     parsed.protocol === "https:" &&
-    (parsed.hostname === "googleapis.com" || parsed.hostname.endsWith(".googleapis.com")) &&
+    isOnServiceApi(parsed, service) &&
     parsed.username === "" &&
     parsed.password === "" &&
     parsed.port === "";
-  if (!isGoogleApi) {
+  if (!isServiceApi) {
     throw new RangeError(
-      "A googleCheck URL is not an https address on googleapis.com, so it gets no access token.",
+      "A googleCheck URL is not an https address on one of its service's Google APIs, so it gets no access token.",
     );
   }
   return parsed;
+}
+
+/**
+ * Whether the URL is on one of the service's own APIs: on its host, or on
+ * the shared host under the API's name.
+ */
+function isOnServiceApi(url: URL, service: SetupService): boolean {
+  const apiHosts = serviceApiHosts(service);
+  if (url.hostname === sharedApiHost) {
+    const firstPathSegment = url.pathname.split("/")[1];
+    return apiHosts.some((api) => apiName(api) === firstPathSegment);
+  }
+  return apiHosts.includes(url.hostname);
+}
+
+/** The service's `googleApis` hosts that are Google API hosts and may get a check. */
+function serviceApiHosts(service: SetupService): string[] {
+  return service.googleApis
+    .map(({ api }) => api)
+    .filter((api) => isApiHost(api) && !neverServiceApiHosts.has(api));
+}
+
+/** An API host's first label, such as `drive` for `drive.googleapis.com`. */
+function apiName(apiHost: string): string {
+  return apiHost.slice(0, apiHost.indexOf("."));
 }
 
 /** What the checks after sign-in need. */
@@ -92,7 +142,7 @@ async function checkService(
   if (service.googleCheck === undefined) {
     return { kind: "allowed" };
   }
-  const answer = await runGoogleCheck(http, service.googleCheck.url, accessToken);
+  const answer = await runGoogleCheck(http, service, service.googleCheck.url, accessToken);
   if (answer === undefined) {
     return { kind: "unreachable" };
   }
@@ -111,10 +161,11 @@ async function checkService(
  */
 async function runGoogleCheck(
   http: HttpClient,
+  service: SetupService,
   url: string,
   accessToken: string,
 ): Promise<GoogleCheckAnswer | undefined> {
-  const checkedUrl = checkGoogleCheckUrl(url);
+  const checkedUrl = checkGoogleCheckUrl(url, service);
   try {
     const response = await http.fetch(checkedUrl.href, {
       method: "GET",

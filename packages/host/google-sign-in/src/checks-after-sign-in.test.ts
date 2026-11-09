@@ -1,5 +1,5 @@
 import { verifies } from "@halonicjs/testing-spec";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   fakeAccountRef,
   fakeCode,
@@ -170,14 +170,33 @@ verifies("google-sign-in.check-request", () => {
     expect([...(check?.headers.keys() ?? [])].sort()).toEqual(["accept", "authorization"]);
   });
 
-  it("refuses a check URL that isn't https on googleapis.com before anything goes to Google", async () => {
+  it("waits 10 seconds at most for a check", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await signInOnce(() => tokenSuccess());
+
+      expect(timeout.mock.calls).toEqual([[10_000]]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("refuses a check URL that isn't https on the service's APIs before anything goes to Google", async () => {
     const refused = [
-      "https://googleapis.com.example.com/v1/me",
+      "https://gmail.googleapis.com.example.com/v1/me",
       "https://x@evil.example/",
       "https://user:pass@gmail.googleapis.com/v1/me",
       "http://gmail.googleapis.com/v1/me",
       "https://gmail.googleapis.com:8443/v1/me",
       "https://evilgoogleapis.com/v1/me",
+      "https://googleapis.com/v1/me",
+      "https://storage.googleapis.com/some-bucket/me",
+      "https://some-bucket.storage.googleapis.com/me",
+      "https://drive.googleapis.com/drive/v3/about",
+      "https://www.googleapis.com/drive/v3/about",
+      "https://www.googleapis.com/storage/v1/b/some-bucket/o/me",
+      "https://www.googleapis.com/v1/me",
+      "https://www.googleapis.com/gmail.evil/v1/me",
       "not a url",
     ];
     for (const url of refused) {
@@ -192,9 +211,37 @@ verifies("google-sign-in.check-request", () => {
     }
   });
 
-  it("allows googleapis.com itself, a subdomain and the default port written out", async () => {
+  it("refuses a check on a listed host that isn't a service's own Google API", async () => {
+    const listedHosts = [
+      "evil.example.com",
+      "googleapis.com",
+      "evilgoogleapis.com",
+      "storage.googleapis.com",
+      "some-bucket.storage.googleapis.com",
+      "www.googleapis.com",
+    ];
+    for (const host of listedHosts) {
+      const server = testServer(() => tokenSuccess());
+      // The path starts with the host's first label, as the shared host's path rule wants.
+      const url = `https://${host}/${host.split(".")[0]}/v1/me`;
+      const service = {
+        ...gmailService,
+        googleApis: [{ api: host, name: "Listed API" }],
+        googleCheck: { method: "GET" as const, url },
+      };
+
+      await expect(server.start({ ...startInput, services: [service] })).rejects.toThrow(
+        RangeError,
+      );
+      expect(server.ports.pendingSignIns.authUrlFor(fakeAccountRef)).toBeUndefined();
+      expect(server.google.requests).toEqual([]);
+    }
+  });
+
+  it("allows the service's API host, its path on Google's shared API host and the default port written out", async () => {
     const sentTo = {
-      "https://googleapis.com/v1/me": "https://googleapis.com/v1/me",
+      "https://www.googleapis.com/gmail/v1/users/me/profile":
+        "https://www.googleapis.com/gmail/v1/users/me/profile",
       "https://gmail.googleapis.com/v1/me": "https://gmail.googleapis.com/v1/me",
       "https://gmail.googleapis.com:443/v1/me": "https://gmail.googleapis.com/v1/me",
     };
@@ -210,5 +257,22 @@ verifies("google-sign-in.check-request", () => {
         expected,
       ]);
     }
+  });
+
+  it("sends Drive's check to its path on Google's shared API host", async () => {
+    const driveCheckUrl = "https://www.googleapis.com/drive/v3/about?fields=user";
+    const server = testServer(() => tokenSuccess({ scope: grantedBoth }));
+    const service = {
+      ...driveService,
+      googleCheck: { method: "GET" as const, url: driveCheckUrl },
+    };
+    const { state } = await server.start({ ...startInput, services: [service] });
+
+    await server.finish({ code: fakeCode, state });
+
+    expect(server.google.requests.map((request) => request.url)).toEqual([
+      tokenEndpoint,
+      driveCheckUrl,
+    ]);
   });
 });
