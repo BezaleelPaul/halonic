@@ -5,6 +5,7 @@ import type {
   SecretPlacement,
   Secrets,
 } from "@halonicjs/ports";
+import { copyRequest, type OwnRequest } from "./own-request.ts";
 import { allowedUrl, type IntegrationPolicy } from "./policy.ts";
 import { IntegrationRefusedError, IntegrationTimeoutError } from "./refused.ts";
 import {
@@ -17,8 +18,14 @@ import {
 } from "./request-body.ts";
 import type { RequestLog } from "./request-log.ts";
 import { type BodyGuard, guardBody, untilAborted } from "./response-body.ts";
-import { removeSecretsFromError, secretForms } from "./secret-filter.ts";
-import { checkPlacements, copyPlacements, place, readSecrets } from "./secret-placement.ts";
+import { removeSecretsFromError, type SecretForms, secretForms } from "./secret-filter.ts";
+import {
+  carriedForms,
+  readDeclaredSecrets,
+  refuseCarriedSecrets,
+  SecretInRequestError,
+} from "./secret-in-request.ts";
+import { checkPlacementHosts, checkPlacements, place, readSecrets } from "./secret-placement.ts";
 
 /**
  * Limits on one request. Every field has a default; the loader sets them
@@ -76,12 +83,27 @@ export function createLimitedHttpClient(options: LimitedHttpOptions): Integratio
   return {
     async fetch(rawUrl: string, init: IntegrationRequestInit = {}): Promise<Response> {
       const started = now();
-      const method = (init.method ?? "GET").toUpperCase();
-      const where = logPlace(rawUrl);
+      // Until the secret check has passed, the method, host and path may hold a key,
+      // so the check runs first: before the URL is parsed and before any other refusal.
+      let logged = unchecked;
       try {
-        const response = await send(options, rawUrl, init, method);
+        // Before the first `await`: from here on the kit reads only this copy.
+        const own = copyRequest(options.policy, rawUrl, init);
+        // Needs no secret, so a placement the sheet doesn't allow is refused before any is read.
+        checkPlacements(options.policy, own.placements);
+        const declared = await readDeclaredSecrets(options.policy, options.secrets);
+        const carried = carriedForms(declared.values());
+        refuseCarriedSecrets(options.policy, carried, {
+          method: own.givenMethod,
+          sentMethod: own.method,
+          url: own.url ?? "",
+          headers: own.headers,
+          body: own.body,
+        });
+        logged = { method: own.method, ...logPlace(own.url) };
+        const response = await send(options, own, { declared, carried });
         options.log.add({
-          method,
+          method: own.method,
           ...logPlace(response.url),
           status: response.status,
           durationMs: now() - started,
@@ -91,8 +113,7 @@ export function createLimitedHttpClient(options: LimitedHttpOptions): Integratio
       } catch (error) {
         const refused = error instanceof IntegrationRefusedError;
         options.log.add({
-          method,
-          ...where,
+          ...(error instanceof SecretInRequestError ? error.logged : logged),
           durationMs: now() - started,
           outcome: refused ? "refused" : "failed",
           ...(refused ? { refusal: error.code } : {}),
@@ -101,6 +122,15 @@ export function createLimitedHttpClient(options: LimitedHttpOptions): Integratio
       }
     },
   };
+}
+
+/** What the log shows of a request that failed before the secret check passed. */
+const unchecked = { method: "", host: "", path: "" };
+
+/** The declared secret values, read once per request, and their forms for the carried check. */
+interface DeclaredSecrets {
+  readonly declared: ReadonlyMap<string, string>;
+  readonly carried: SecretForms;
 }
 
 /** The parts of a request that change from one redirect hop to the next. */
@@ -115,27 +145,28 @@ interface Hop {
 
 async function send(
   options: LimitedHttpOptions,
-  rawUrl: string,
-  init: IntegrationRequestInit,
-  method: string,
+  own: OwnRequest,
+  { declared, carried }: DeclaredSecrets,
 ): Promise<Response> {
   const { policy, limits = {} } = options;
-  const { auth, signal, redirect: _redirect, ...rest } = init;
-  // From here on only the frozen copies are read, never the code's `auth`.
-  const placements = copyPlacements(policy, auth === undefined ? [] : [auth].flat());
-  const url = allowedUrl(policy, rawUrl);
-  checkPlacements(policy, placements, url);
-  const body = rest.body ?? null;
+  // Only the copied method, headers and body reach the transport, which the secret check has
+  // read. Every other option is dropped: `referrer` goes out as an unchecked `Referer` header,
+  // and Node's `dispatcher` would hand the whole request, placed secrets included, to the
+  // integration.
+  const { placements, body, signal } = own;
+  // After the secret check, which skips a body it can't read, so this refusal logs no key.
   checkBody(policy, body);
+  const url = allowedUrl(policy, own.url);
+  checkPlacementHosts(policy, placements, url);
   const maxBodyBytes = requestBodyLimit(limits.maxRequestBodyBytes);
   const values = await readSecrets(policy, options.secrets, placements);
   const hop: Hop = {
     url,
-    method,
+    method: own.method,
     body,
     form: placements.some((p) => p.as === "form") ? toForm(policy, body) : undefined,
     placements,
-    headers: new Headers(rest.headers),
+    headers: new Headers(own.headers),
   };
   const deadline = new AbortController();
   const stop = (what: string, ms: number) =>
@@ -156,8 +187,9 @@ async function send(
     maxBytes: limits.maxResponseBytes ?? 10 * 1024 * 1024,
     onIdle: () => stop("no data", limits.idleTimeoutMs ?? 60_000),
     done: () => clearTimeout(total),
+    // Every declared secret, not only the placed ones: the bridge filters the same way.
     secrets: secretForms(
-      [...values].map(([secret, value]) => ({
+      [...declared].map(([secret, value]) => ({
         value,
         placements: placements.filter((placement) => placement.secret === secret),
       })),
@@ -172,7 +204,6 @@ async function send(
       if (bodyBytes(body) > maxBodyBytes) throw requestTooLarge(policy, hop.url, maxBodyBytes);
       const response = await untilAborted(
         options.transport.fetch(hop.url.href, {
-          ...rest,
           method: hop.method,
           headers,
           body,
@@ -193,6 +224,7 @@ async function send(
           `${policy.name}: ${hop.url.host}${hop.url.pathname} redirected more than ${maxRedirects} times`,
         );
       }
+      refuseCarriedSecrets(policy, carried, { url: location, base: hop.url });
       follow(hop, response.status, allowedUrl(policy, location, hop.url));
     }
   } catch (error) {

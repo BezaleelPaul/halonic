@@ -233,7 +233,24 @@ verifies("integration-kit.secrets-placed-by-kit", () => {
       .catch((thrown: Error) => thrown);
     expect(String(error)).not.toContain(canary["example-key"]);
   });
+
+  it("never hands the transport a dispatcher, which would see the placed secret", async () => {
+    const { http, options } = client();
+    // Node's fetch hands the whole request, headers included, to a `dispatcher`.
+    const dispatcher = {
+      dispatch: () => {
+        throw new Error("the integration's dispatcher saw the request");
+      },
+    } as unknown as NonNullable<RequestInit["dispatcher"]>;
+    const init = { auth: { secret: "example-key", as: "bearer" } as const, dispatcher };
+    await http.fetch("https://api.example.com/v1", init);
+    expect(options).toHaveLength(1);
+    expect(Object.keys(options[0] ?? {}).sort()).toEqual(transportOptions);
+  });
 });
+
+/** The only options the kit passes on to the transport. */
+const transportOptions = ["body", "headers", "method", "redirect", "signal"];
 
 verifies("integration-kit.redirects-checked", () => {
   it("follows a redirect to a declared host and drops a secret that may not go there", async () => {
@@ -365,22 +382,23 @@ verifies("integration-kit.request-limits", () => {
     // A fake clock, so a slow runner can't let the idle timer win the race.
     vi.useFakeTimers();
     try {
-      const { http } = client(() => new Response(pieces(["a", "b", "c"], 0)), {
-        idleTimeoutMs: 10,
-      });
+      // Pieces longer than the secret filter holds back, so the first read gets data.
+      const long = ["a".repeat(100), "b".repeat(100), "c".repeat(100)];
+      const { http } = client(() => new Response(pieces(long, 0)), { idleTimeoutMs: 10 });
       const { body } = await http.fetch("https://api.example.com/");
       if (body === null) throw new Error("expected a body");
       const reader = body.getReader();
       const first = reader.read();
       await vi.advanceTimersByTimeAsync(1);
-      expect((await first).done).toBe(false);
+      const { done, value } = await first;
+      expect(done).toBe(false);
 
       await vi.advanceTimersByTimeAsync(40);
 
       // Read to the end: a piece the kit already read ahead would hide a stale idle timer.
       const rest = readAll(reader);
       await vi.advanceTimersByTimeAsync(1);
-      expect(await rest).toBe("bc");
+      expect(new TextDecoder().decode(value) + (await rest)).toBe(long.join(""));
     } finally {
       vi.useRealTimers();
     }
