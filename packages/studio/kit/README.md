@@ -259,6 +259,9 @@ A `count` is `{ value, tone, name }`: an `accent` chip, or `danger` when it coun
 number is hidden from screen readers, which hear its `name` instead: "Configuration, 2 errors".
 The tab itself never turns red.
 
+Without `fill`, the labels sit on one line. When the tabs are wider than their column, as at
+200% text, each label wraps inside its tab instead of running out of it.
+
 **Keyboard.** Only the selected tab is in the Tab order. The left and right arrow keys move to
 the next tab and select it, wrapping round; Home and End jump to the ends. Disabled tabs are
 skipped. Switching is instant, with no sliding indicator, and never adds to Back.
@@ -266,7 +269,7 @@ skipped. Switching is instant, with no sliding indicator, and never adds to Back
 | State    | What shows                                                                 |
 | -------- | -------------------------------------------------------------------------- |
 | Default  | `fg-muted` text on the `surface-muted` track, 28px high                    |
-| Selected | A `surface` fill, `fg` text at weight 500, `shadow-1`                      |
+| Selected | A `surface` fill, `fg` text at weight 500, `shadow-1`, a transparent edge  |
 | Hover    | Text `fg`, no fill change                                                  |
 | Focus    | The standard focus ring                                                    |
 | Disabled | `fg-disabled`, clicks ignored, skipped by the arrow keys (`aria-disabled`) |
@@ -277,6 +280,9 @@ tabs share it equally, each at least 48px high with 4px 8px padding. A label wra
 and the counter follows it like one more word; a word longer than its tab breaks with a hyphen.
 Labels are never shortened and the tabs never scroll sideways. **On a touch screen** at desktop
 width a tab renders at 40px with a 48px hit area.
+
+**In high contrast** the selected tab keeps an edge: forced colours drops its fill and shadow and
+paints the transparent outline instead. A disabled tab turns `GrayText` (`text-forced-disabled`).
 
 ## Presentation
 
@@ -456,6 +462,9 @@ them by hand.
 | `error`     | A sentence that says what to do: "Give the agent a name." Replaces the hint |
 | `required`  | Writes "Required" after the label in `fg-subtle`. No asterisk               |
 
+Screen readers hear "required" once, from the control's `aria-required`: the visible word is
+hidden from them.
+
 The error line is `danger` with the 16px alert icon, so the colour is never the only sign. A
 control of your own can read the Field through `useFieldControl()`.
 
@@ -472,13 +481,14 @@ A one-line text field.
 | Default   | `surface` fill, a `border-control` edge, the placeholder in `fg-subtle`                 |
 | Hover     | The edge turns `fg-muted`                                                               |
 | Focus     | An `accent` edge and a 3px `accent-soft` ring (`focus-field`), while the text has focus |
-| Disabled  | `surface-subtle` fill, a `border` edge, the text and placeholder in `fg-disabled`       |
+| Disabled  | `surface-subtle` fill, a `border` edge, the text in `fg-disabled`, cursor `not-allowed` |
 | Error     | A `danger` edge, and a `danger-soft` ring with focus; the sentence comes from the Field |
 | Read-only | Like the default on `surface-subtle`, with no hover; the text stays selectable          |
 
 `Input` takes `size` (`md` 32px or `sm` 28px), a 16px `leadingIcon` and a `trailing` button (a
 `sm` ghost icon `Button`, such as Clear). A button inside the box keeps the general focus ring, so
-you can tell it from the text.
+you can tell it from the text. A press anywhere in the box, padding and icon included, puts the
+caret in the text; a press on the trailing button doesn't.
 
 **Keys.** Enter submits its form, **except while an input method is composing**: the Enter that
 picks a Japanese or Chinese word must never send. Your own key handlers use the same check,
@@ -486,7 +496,9 @@ picks a Japanese or Chinese word must never send. Your own key handlers use the 
 false.
 
 **On a phone** the box is at least 48px high, with 12px padding and 16px text
-(`text-input-touch`), so the browser doesn't zoom in.
+(`text-input-touch`), so the browser doesn't zoom in. The trailing button keeps its `sm` look with
+a 48px hit area, so the box stays 48px. **On a touch screen** at desktop width the box is 40px,
+like the Buttons beside it, and the text is 16px too.
 
 ## TextArea
 
@@ -499,9 +511,14 @@ A text field of several lines, in the Input's box and states. It grows with its 
 </Field>;
 ```
 
-**Keys.** Enter adds a line. Ctrl Enter (⌘ Enter on macOS) submits its form; outside a form it
-goes to your `onKeyDown`, as other keys do. While an input method is composing, Enter does
-neither. No key approves, rejects or deletes.
+**Keys.** Enter adds a line. Ctrl Enter (⌘ Enter on macOS) submits its form only with
+`submitOnCtrlEnter`, which the forms in component specs 23 A8 turn on: Create version, Start a
+run, Ask for changes and a request's message. Otherwise, and outside a form, it goes to your
+`onKeyDown`, as other keys do. While an input method is composing, Enter does neither. No key
+approves, rejects or deletes.
+
+The limit is `max-h-rows` in `theme.css`: lines in `lh`, after a px fallback from the line-height
+token for an engine without that unit.
 
 **On a phone** it's at least 48px high, with 16px text. Long text on a phone page (Instructions,
 Description) opens the text sheet instead; that comes with the Sheet.
