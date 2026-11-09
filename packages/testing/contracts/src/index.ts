@@ -71,7 +71,12 @@ export {
   runExecutorContract,
   type WaitingApproval,
 } from "./run-executor.ts";
-export { type MakeRunStore, type RunStoreContractOptions, runStoreContract } from "./run-store.ts";
+export {
+  type MakeRunStore,
+  type RunStoreContractOptions,
+  runStoreContract,
+  type SharedRunStorage,
+} from "./run-store.ts";
 export {
   type MakeSandbox,
   type SandboxCheckHarness,
