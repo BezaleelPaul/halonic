@@ -1,6 +1,7 @@
-import { type FileProblem, fileKinds, type KindName } from "@halonicjs/format";
+import { type FileProblem, fileKinds, type KindName, type KindValues } from "@halonicjs/format";
 import { readYaml, type SourcePosition } from "@halonicjs/yaml";
 import type { LoadedFile, LoadedFileOf, WorkspaceIssue } from "../load-workspace.ts";
+import { placeOf } from "../places.ts";
 
 /** One file as the loader read it: its path, its kind and its text. */
 export interface ReadFile {
@@ -14,6 +15,11 @@ const fileStart: SourcePosition = { line: 1, col: 1 };
 
 /** The keys and list indexes to a value; `[]` for the whole file. */
 type Path = FileProblem["path"];
+
+/** The kinds whose files have an id, such as `agent`; not `models` or a workflow test. */
+type KindWithId = {
+  [Name in KindName]: KindValues[Name] extends { readonly id: string } ? Name : never;
+}[KindName];
 
 /**
  * What every check across files gets: the files that parsed, the kinds of
@@ -41,10 +47,33 @@ export class CheckContext {
     );
   }
 
+  /** The ids of the parsed files of one kind in one hub (`null`: the root). */
+  idsOf(kind: KindWithId, hub: string | null): Set<string> {
+    return new Set(this.filesOf(kind, hub).map((file) => file.value.id));
+  }
+
   /** Whether the loader read a file of this kind, whether it parsed or not. */
   hasReadKind(kind: KindName): boolean {
     for (const file of this.read.values()) {
       if (file.kind === kind) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Whether a hub's `hub.yaml` was read but failed its own checks. The old
+   * loader then left the hub out: what its files name isn't checked, and
+   * whatever names the hub finds it unknown. A hub without a `hub.yaml`
+   * hasn't failed.
+   */
+  hubFailed(hub: string | null): boolean {
+    if (hub === null || this.filesOf("hub", hub).length > 0) {
+      return false;
+    }
+    for (const file of this.read.values()) {
+      if (file.kind === "hub" && placeOf(file.path)?.hub === hub) {
         return true;
       }
     }
