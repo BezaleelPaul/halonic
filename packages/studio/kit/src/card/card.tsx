@@ -67,17 +67,15 @@ const stateClasses: Record<CardState, string> = {
 const box = "rounded-md border bg-surface text-left";
 
 /** Only an interactive card reacts: a lifted edge on hover, the hover fill while pressed. */
-const reacts = [
-  "transition-[color,background-color,border-color,box-shadow]",
-  "active:bg-surface-subtle hover:shadow-1",
-].join(" ");
+const reacts = ["transition", "active:bg-surface-subtle hover:shadow-1"].join(" ");
 
 /**
  * An interactive card's classes by state. A disabled card still opens (to say why it's paused),
- * but it doesn't light up; an error card lifts but keeps its `danger` edge.
+ * but it doesn't light up; an error card lifts but keeps its `danger` edge. With more contrast
+ * `border-strong` barely differs from the resting edge, so the hover edge goes to `fg-muted` there.
  */
 const interactiveClasses: Record<CardState, string> = {
-  default: `block w-full focus-ring ${reacts} hover:border-border-strong`,
+  default: `block w-full focus-ring ${reacts} hover:border-border-strong contrast-more:hover:border-fg-muted`,
   disabled: "block w-full focus-ring",
   error: `block w-full focus-ring ${reacts}`,
 };

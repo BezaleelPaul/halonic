@@ -159,6 +159,11 @@ describe("theme.css selection and high contrast", () => {
       "@media (forced-colors: active)",
     );
     expect(disabled).toContain("color: GrayText;");
+    const disabledEdge = blockBody(
+      blockBody(css, "@utility border-forced-disabled"),
+      "@media (forced-colors: active)",
+    );
+    expect(disabledEdge).toContain("border-color: GrayText;");
   });
 });
 
@@ -252,6 +257,15 @@ describe("theme.css scales", () => {
       "--duration-base",
       "--duration-slow",
     ]);
+  });
+
+  it("keeps fades short and makes colour changes instant with reduced motion", () => {
+    const reduced = customProperties(
+      blockBody(blockBody(css, "@media (prefers-reduced-motion: reduce)"), ":root"),
+    );
+    expect(reduced.get("--duration-base")).toBe("120ms");
+    expect(reduced.get("--duration-slow")).toBe("120ms");
+    expect(reduced.get("--default-transition-duration")).toBe("0ms");
   });
 });
 
