@@ -1,9 +1,63 @@
 import type { SecretPlacement, Secrets } from "@halonicjs/ports";
 import { isLoopback } from "./local-address.ts";
-import { hostIn, type IntegrationPolicy } from "./policy.ts";
+import { type DeclaredPlacement, hostIn, type IntegrationPolicy } from "./policy.ts";
 import { IntegrationRefusedError } from "./refused.ts";
 
-/** Checks every placement against the sheet before anything is sent. */
+/**
+ * Copies the placements the integration's code gave into frozen objects of
+ * text fields, reading each field once. The kit checks and places only
+ * these copies: the code keeps its own objects and could change them, or
+ * give a getter, after the check and before the secret is placed. A field
+ * that isn't text is refused here, because an object could turn into other
+ * text each time it is read.
+ */
+export function copyPlacements(
+  policy: IntegrationPolicy,
+  placements: readonly unknown[],
+): readonly SecretPlacement[] {
+  return Object.freeze(placements.map((placement) => copyPlacement(policy, placement)));
+}
+
+/** A placement as the integration's code may give it, with nothing trusted. */
+interface GivenPlacement {
+  readonly secret?: unknown;
+  readonly as?: unknown;
+  readonly header?: unknown;
+  readonly prefix?: unknown;
+  readonly field?: unknown;
+}
+
+function copyPlacement(policy: IntegrationPolicy, placement: unknown): SecretPlacement {
+  if (typeof placement !== "object" || placement === null) {
+    throw notText(policy, "a secret placement");
+  }
+  const given: GivenPlacement = placement;
+  const secret = given.secret;
+  const as = given.as;
+  if (typeof secret !== "string") throw notText(policy, "the secret's name");
+  if (typeof as !== "string") throw notText(policy, `the "as" of the secret "${secret}"`);
+  const copy: Record<string, string> = { secret, as };
+  for (const key of ["header", "prefix", "field"] as const) {
+    const value = given[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") throw notText(policy, `the "${key}" of the secret "${secret}"`);
+    copy[key] = value;
+  }
+  // Whether the fields fit together is for `checkPlacements` to say.
+  return Object.freeze(copy) as unknown as SecretPlacement;
+}
+
+function notText(policy: IntegrationPolicy, what: string): IntegrationRefusedError {
+  return new IntegrationRefusedError(
+    "placement-not-in-sheet",
+    `${policy.name}: ${what} in a secret placement is not text`,
+  );
+}
+
+/**
+ * Checks every placement against the sheet before anything is sent. Give
+ * it the copies from {@link copyPlacements}, never the code's own objects.
+ */
 export function checkPlacements(
   policy: IntegrationPolicy,
   placements: readonly SecretPlacement[],
@@ -19,6 +73,12 @@ export function checkPlacements(
         `${policy.name}: the secret "${placement.secret}" is not in its permission sheet`,
       );
     }
+    if (!matchesSheet(placement, declared.placement)) {
+      throw new IntegrationRefusedError(
+        "placement-not-in-sheet",
+        `${policy.name}: the secret "${placement.secret}" goes ${describe(declared.placement)} in its permission sheet, not ${describe(placement)}`,
+      );
+    }
     if (!hostIn(declared.hosts, url)) {
       throw new IntegrationRefusedError(
         "secret-not-allowed-for-host",
@@ -32,6 +92,68 @@ export function checkPlacements(
       );
     }
   }
+}
+
+/**
+ * Whether the code places the secret the way the sheet says. Otherwise it
+ * could put a key in a field the service stores, such as a note title,
+ * where the integration could read it back. Header names match ignoring
+ * ASCII case, as HTTP does; a missing prefix and `""` send the same bytes;
+ * form field names are case-sensitive. The placement comes from the
+ * integration's code, so nothing in it is trusted to have the right type.
+ */
+function matchesSheet(placement: SecretPlacement, sheet: DeclaredPlacement): boolean {
+  switch (sheet.as) {
+    case "bearer":
+      return placement.as === "bearer";
+    case "header":
+      return (
+        placement.as === "header" &&
+        typeof placement.header === "string" &&
+        asciiLowerCase(placement.header) === asciiLowerCase(sheet.header) &&
+        (placement.prefix ?? "") === (sheet.prefix ?? "")
+      );
+    case "form":
+      return placement.as === "form" && placement.field === sheet.field;
+  }
+}
+
+/**
+ * Lower-cases `A` to `Z` only. `toLowerCase` would also turn the Kelvin
+ * sign into `k`, so a header no service reads would pass as `x-api-key`.
+ */
+function asciiLowerCase(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/** A placement in words, for a refusal message. It never holds a value. */
+function describe(placement: DeclaredPlacement | SecretPlacement): string {
+  switch (placement.as) {
+    case "bearer":
+      return "as a bearer token";
+    case "header": {
+      const prefix = placement.prefix ?? "";
+      return prefix === ""
+        ? `in the header ${quoted(placement.header)}`
+        : `in the header ${quoted(placement.header)} after ${quoted(prefix)}`;
+    }
+    case "form":
+      return `in the form field ${quoted(placement.field)}`;
+    default:
+      return `as ${quoted((placement as { as: unknown }).as)}`;
+  }
+}
+
+/**
+ * Text from the integration's code, cut short and quoted, so it can't break
+ * the message. It is cut by characters before quoting, so the cut never
+ * falls inside an escape or a surrogate pair.
+ */
+function quoted(text: unknown): string {
+  const characters = Array.from(String(text));
+  const shown =
+    characters.length <= 50 ? characters.join("") : `${characters.slice(0, 50).join("")}…`;
+  return JSON.stringify(shown);
 }
 
 /** A secret goes over `https`, or over plain `http` only to this machine. */
