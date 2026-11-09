@@ -1,5 +1,6 @@
 import type { Digest } from "@halonicjs/ports";
 import {
+  agentPlacementStoreContract,
   blobStoreContract,
   clockContract,
   coordinationContract,
@@ -26,6 +27,7 @@ import { describe, it } from "vitest";
 import {
   fixedIds,
   ManualClock,
+  MemoryAgentPlacementStore,
   MemoryBlobStore,
   MemoryCoordination,
   MemoryDefinitionStore,
@@ -63,6 +65,10 @@ const digest: Digest = {
 trustStoreAttackContract("memory", makeTrustStore, async (connectors) => {
   const content = trustContent({ connectors });
   return { content, fingerprint: await trustFingerprint(content, digest) };
+});
+agentPlacementStoreContract("memory", async () => {
+  const store = new MemoryAgentPlacementStore();
+  return { store, damage: async (key) => store.damage(key) };
 });
 clockContract("memory", async () => new ManualClock());
 resourceProbeContract("memory", async () => {
