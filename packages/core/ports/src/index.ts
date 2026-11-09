@@ -106,6 +106,7 @@ export {
 export { type LlmCache, llmCacheVersion } from "./llm-cache.ts";
 export {
   isModelCallError,
+  isModelOutOfMemory,
   type LlmCapabilities,
   type LlmProvider,
   type LlmProviderFactory,
@@ -154,6 +155,12 @@ export {
   type StartAgentRequest,
   type StartRunRequest,
 } from "./run-executor.ts";
+export {
+  type AdapterFailure,
+  adapterFailures,
+  isRunFailureError,
+  RunFailureError,
+} from "./run-failure-error.ts";
 export {
   type AppendOptions,
   type AppendResult,
