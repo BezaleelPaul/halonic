@@ -41,6 +41,16 @@ export {
   definitionStoreVersion,
 } from "./definition-store.ts";
 export { type Digest, digestVersion } from "./digest.ts";
+export {
+  type Harness,
+  type HarnessBridge,
+  type HarnessDetection,
+  type HarnessEvent,
+  type HarnessInput,
+  type HarnessRun,
+  type HarnessTask,
+  harnessVersion,
+} from "./harness.ts";
 export { type HttpClient, httpClientVersion } from "./http-client.ts";
 export { type IdGenerator, idGeneratorVersion } from "./id-generator.ts";
 export {
