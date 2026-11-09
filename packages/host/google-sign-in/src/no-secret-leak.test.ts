@@ -1,5 +1,5 @@
 import { verifies } from "@halonicjs/testing-spec";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   fakeAccessToken,
   fakeClient,
@@ -12,7 +12,7 @@ import {
 } from "./fake-google.test-helper.ts";
 import { findLeakedSecrets } from "./leak-scan.test-helper.ts";
 import { revokeGoogleSignIn } from "./revoke.ts";
-import { knownVerifier, signInOnce } from "./sign-in.test-helper.ts";
+import { knownVerifier, signInOnce, tokenEndpoint } from "./sign-in.test-helper.ts";
 
 /** Every secret of a sign-in. The whole ID token counts, because it holds the e-mail. */
 const secrets = {
@@ -39,6 +39,43 @@ const answers: Record<string, () => Response> = {
   },
 };
 
+/** A check answer that echoes every secret, as a hostile or broken API could. */
+function echoingCheckAnswer(status: number): Response {
+  const echo = Object.values(secrets).join(" ");
+  return Response.json(
+    { error: { message: echo, errors: [{ reason: echo, message: echo }] } },
+    { status },
+  );
+}
+
+/**
+ * A check answer that says the API is off and puts one secret, on its own,
+ * into each field the reader looks at: the reason, the API host and the
+ * project. Each has the shape the field expects, so only the reader's rules
+ * keep it out, not the token's format.
+ */
+function echoingApiOffAnswer(secret: string): Response {
+  return Response.json(
+    {
+      error: {
+        errors: [{ reason: "accessNotConfigured" }, { reason: secret }],
+        details: [
+          {
+            "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            reason: "SERVICE_DISABLED",
+            metadata: { service: `${secret}.googleapis.com`, consumer: `projects/${secret}` },
+          },
+        ],
+      },
+    },
+    { status: 403 },
+  );
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 verifies("google-sign-in.no-secret-leak", () => {
   for (const [name, answer] of Object.entries(answers)) {
     it(`keeps every secret out of the result, auth URL, request URLs and store names: ${name}`, async () => {
@@ -52,6 +89,59 @@ verifies("google-sign-in.no-secret-leak", () => {
       expect(leaked).toEqual([]);
     });
   }
+
+  for (const status of [200, 403, 500]) {
+    it(`keeps every secret out of the result when a check's answer echoes them: ${status}`, async () => {
+      const { result } = await signInOnce((request) =>
+        request.url === tokenEndpoint ? tokenSuccess() : echoingCheckAnswer(status),
+      );
+
+      expect(findLeakedSecrets(secrets, { results: [result] })).toEqual([]);
+    });
+  }
+
+  for (const [name, secret] of Object.entries(secrets)) {
+    it(`keeps a secret out of an apiOff result that echoes it as the API and project: ${name}`, async () => {
+      const { result } = await signInOnce((request) =>
+        request.url === tokenEndpoint ? tokenSuccess() : echoingApiOffAnswer(secret),
+      );
+
+      expect(result).toMatchObject({
+        kind: "signedIn",
+        services: expect.arrayContaining([
+          expect.objectContaining({ result: expect.objectContaining({ kind: "apiOff" }) }),
+        ]),
+      });
+      expect(findLeakedSecrets(secrets, { results: [result] })).toEqual([]);
+    });
+  }
+
+  it("sends the access token only in a check's Authorization header", async () => {
+    const { google } = await signInOnce(() => tokenSuccess());
+
+    for (const request of google.requests) {
+      const isCheck = request.url !== tokenEndpoint;
+      const headerTexts = [...request.headers.values()];
+      expect(headerTexts.some((value) => value.includes(fakeAccessToken))).toBe(isCheck);
+      expect(request.form.toString()).not.toContain(fakeAccessToken);
+      if (isCheck) {
+        expect(new URL(request.url).hostname.endsWith(".googleapis.com")).toBe(true);
+      }
+    }
+  });
+
+  it("writes nothing to the console during a sign-in with checks", async () => {
+    const methods = ["log", "info", "warn", "error", "debug", "trace"] as const;
+    const spies = methods.map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
+
+    await signInOnce((request) =>
+      request.url === tokenEndpoint ? tokenSuccess() : echoingCheckAnswer(403),
+    );
+
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+    }
+  });
 
   it("never writes the pending sign-in to the TokenStore", async () => {
     const { tokens } = await signInOnce(() => tokenSuccess());
