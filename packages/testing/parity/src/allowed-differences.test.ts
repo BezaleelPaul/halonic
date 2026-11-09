@@ -105,6 +105,12 @@ verifies("parity.allowed-differences-checked", () => {
       "format.deployments-file",
       "format.skill-file",
       "format.skill-file",
+      "routines.due",
+      "routines.due",
+      "routines.due",
+      "routines.due",
+      "routines.due",
+      "routines.due",
     ]);
   });
 
