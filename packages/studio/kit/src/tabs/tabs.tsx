@@ -151,6 +151,9 @@ export function Tabs<Id extends string>({
             aria-controls={isSelected ? panelId : undefined}
             aria-disabled={isDisabled ? true : undefined}
             tabIndex={tab.id === focusable ? 0 : -1}
+            // An unselected tab shows the muted track, so its counter takes the on-muted: look.
+            // The selected tab is a raised surface segment, so its counter keeps the normal look.
+            data-fill={isSelected ? undefined : "muted"}
             className={`${tabClasses} ${sizeClasses[layout]} ${stateClasses[state]}`}
             onClick={() => {
               if (!isDisabled) {

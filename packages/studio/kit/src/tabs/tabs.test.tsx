@@ -83,6 +83,26 @@ verifies("kit.tabs", () => {
     expect(flow?.className).toContain("focus-ring");
   });
 
+  it("marks each unselected tab as a muted fill, and not the selected tab or the track", async () => {
+    const tabs: readonly Tab<View>[] = [
+      { id: "flow", label: "Flow" },
+      { id: "configuration", label: "Configuration" },
+      { id: "runs", label: "Runs", disabled: true },
+    ];
+    const { container } = render(<Page tabs={tabs} />);
+    const list = container.querySelector('[role="tablist"]') as HTMLElement;
+    const [flow, configuration, runs] = tabsIn(container);
+    // The selected tab is a raised surface segment, so a counter on it keeps its normal look.
+    expect(flow?.hasAttribute("data-fill")).toBe(false);
+    expect(configuration?.getAttribute("data-fill")).toBe("muted");
+    expect(runs?.getAttribute("data-fill")).toBe("muted");
+    expect(list.hasAttribute("data-fill")).toBe(false);
+
+    await click(configuration as HTMLElement);
+    expect(flow?.getAttribute("data-fill")).toBe("muted");
+    expect(configuration?.hasAttribute("data-fill")).toBe(false);
+  });
+
   it("renders at 40px with a 48px hit area on a touch screen", () => {
     const { container } = render(<Page />);
     expect(tabsIn(container)[0]?.className).toContain("touch:min-h-control-lg touch:hit-touch");
