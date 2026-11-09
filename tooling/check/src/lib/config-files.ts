@@ -46,6 +46,12 @@ export interface DependencyList {
 /** The contents of `tooling/check/policy.json`. */
 export interface Policy {
   readonly coreOrder: readonly string[];
+  /**
+   * The API types packages: core packages that use only each other, so
+   * Studio, the CLI and outside callers can use them without the engine.
+   * Empty when `policy.json` has none.
+   */
+  readonly apiTypes: readonly string[];
   readonly published: readonly string[];
   readonly adapterGateways: readonly string[];
   /**
@@ -73,7 +79,7 @@ export function parsePolicy(path: string, value: unknown): Policy {
     value,
     "",
     ["coreOrder", "published", "adapterGateways", "cloudRuntimes", "fileSize"],
-    ["extraExports"],
+    ["apiTypes", "extraExports"],
   );
   const fileSize = at.object(policy["fileSize"], "fileSize", [
     "warnLines",
@@ -82,6 +88,7 @@ export function parsePolicy(path: string, value: unknown): Policy {
   ]);
   return {
     coreOrder: at.strings(policy["coreOrder"], "coreOrder"),
+    apiTypes: policy["apiTypes"] === undefined ? [] : at.strings(policy["apiTypes"], "apiTypes"),
     published: at.strings(policy["published"], "published"),
     adapterGateways: at.strings(policy["adapterGateways"], "adapterGateways"),
     extraExports:
