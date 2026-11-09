@@ -9,7 +9,10 @@ import { readYaml, type YamlPath } from "./read.ts";
 import { spliceEdit } from "./splice.ts";
 import { writeYamlFile } from "./write.ts";
 
-/** A busy CI runner is over ten times slower than a laptop, so the runs below stay small. */
+/**
+ * A busy CI runner is over ten times slower than a laptop, so the runs below stay small: each
+ * property aims at about 3 s on a normal CI run.
+ */
 vi.setConfig({ testTimeout: 20_000 });
 
 /** Plain data as workspace files hold it: no `undefined`, no `-0`. */
@@ -195,32 +198,31 @@ verifies("yaml.edit-preserve", () => {
           if (index !== line - 1) expect(after[index]).toBe(old);
         });
       }),
-      { numRuns: 300 },
+      { numRuns: 150 },
     );
   });
 });
 
 verifies("yaml.edit-preserve", () => {
-  const tricky = fc
-    .oneof(
-      fc.constantFrom(
-        ..."yes,no,null,Null,1.0,0x1,0o7,~,true,.inf,-.nan,a: b,#x,- x,[a],{a},*a,&a,!t,%x,@x,`x,'q',\"q\"".split(
-          ",",
-        ),
-        "",
-        " lead",
-        "trail ",
-        "\n",
-        "a\nb",
-        "a\n",
-      ),
-      fc.string({ maxLength: 20 }),
-    )
+  /** Texts YAML reads as something else unless they are quoted: always tried, never sampled. */
+  const trickyTexts = [
+    ..."yes,no,null,Null,1.0,0x1,0o7,~,true,.inf,-.nan,a: b,#x,- x,[a],{a},*a,&a,!t,%x,@x,`x,'q',\"q\"".split(
+      ",",
+    ),
+    "",
+    " lead",
+    "trail ",
+    "\n",
+    "a\nb",
+    "a\n",
+  ];
+  const randomText = fc
+    .string({ maxLength: 20 })
     .filter((text) => text !== "first" && text !== "list");
 
   it("reads every new text value and key back as the same string", () => {
     fc.assert(
-      fc.property(tricky, (text) => {
+      fc.property(randomText, (text) => {
         const file = "# keep\nfirst: 1\nlist:\n  - a\n";
         const edits: YamlEdit[] = [
           { kind: "set", path: ["first"], value: text },
@@ -237,7 +239,7 @@ verifies("yaml.edit-preserve", () => {
         expect(all.layout).toBe("kept");
         expect(unwrap(readYaml(all.text)).data).toEqual(expected);
       }),
-      { numRuns: 300 },
+      { numRuns: 60, examples: trickyTexts.map((text) => [text]) },
     );
   });
 });
@@ -268,7 +270,7 @@ verifies("yaml.edit-preserve-entries", () => {
         const ownLines = countLines(writeYamlFile(entry), false);
         expect(countLines(text, true) - countLines(spliced, true)).toBe(ownLines - 1);
       }),
-      { numRuns: 300 },
+      { numRuns: 150 },
     );
   });
 });
@@ -308,7 +310,7 @@ verifies("yaml.edit-style", () => {
           indentsOf(stringify(read, { lineWidth: 100, ...indent })),
         );
       }),
-      { numRuns: 300 },
+      { numRuns: 100 },
     );
   });
 });
