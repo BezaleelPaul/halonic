@@ -58,11 +58,37 @@ export interface VcsCommit {
  * makes it a repository of its own. So no method ever reads or changes a
  * file outside the folder, such as a parent repository's staged changes or
  * the files a checkout there would rewrite.
+ *
+ * **Nothing a caller passes is ever read as an option or as the
+ * repository's own files.** The old desktop app kept a blocklist of git
+ * options, which a unique prefix such as `--upload-pac=` could get around.
+ * So every adapter, before anything runs:
+ *
+ * - refuses with a `RangeError` every **path the `DefinitionSource` port
+ *   refuses**: an unsafe one (absolute, a `.`, `..` or empty segment, a
+ *   backslash or NUL) and a private one, matched the same way (`.git`,
+ *   `.studio`, `.env`, `.envrc` and `.env.*` in any case, with trailing dots
+ *   or spaces or the code points HFS+ ignores, and any segment with a `:`
+ *   or an 8.3 short name such as `GIT~1`);
+ * - treats **every path as a literal file name**: never an option (one that
+ *   starts with `-`) and never a pattern (`*`, `?`, `[` or `:(…)`), so a git
+ *   adapter passes paths after `--` with `--literal-pathspecs` (or
+ *   `GIT_LITERAL_PATHSPECS=1`), or `discard(["*.yaml"])` would wipe every
+ *   `.yaml` file;
+ * - refuses with a `RangeError` a **branch name** that starts with `-`, that
+ *   `git check-ref-format --branch` refuses, the name `HEAD`, and `@` or any
+ *   name with `@{`, which git expands (`@{-1}` is the previous branch);
+ * - in a git adapter, refuses a path that goes through a symbolic link, such
+ *   as `link/config` with `link -> .git` or a link out of the folder, which
+ *   the path rules above can't see;
+ * - commits a message as the message, whatever it starts with.
+ *
+ * Remotes and upstreams come from the repository, never from a caller.
  */
 export interface Vcs {
   /** The branch, its upstream and the changed files. */
   status(): Promise<VcsStatus>;
-  /** Unified diff of one file: staged = index vs HEAD, otherwise working tree vs index. */
+  /** Unified diff of one file: staged = index vs HEAD, otherwise working tree vs index. Empty when they are the same. */
   diff(path: string, staged: boolean): Promise<string>;
   /** Adds the files' changes to the index. */
   stage(paths: string[]): Promise<void>;
@@ -70,9 +96,17 @@ export interface Vcs {
   unstage(paths: string[]): Promise<void>;
   /** Throw away working-tree changes: tracked files go back to the index, untracked files are deleted. */
   discard(paths: string[]): Promise<void>;
-  /** Commits what is staged; returns the new commit hash. Refuses an empty message and an empty commit. */
+  /**
+   * Commits what is staged; returns the new commit hash.
+   *
+   * @throws when nothing is staged, or the message is empty
+   */
   commit(message: string): Promise<string>;
-  /** At most `limit` (at least 1) commits on the current branch, newest first. */
+  /**
+   * At most `limit` commits on the current branch, newest first.
+   *
+   * @throws RangeError when `limit` isn't a whole number of at least 1
+   */
   log(limit: number): Promise<VcsCommit[]>;
   /** The local branch names; a branch with no commits yet isn't listed. */
   branches(): Promise<string[]>;
@@ -81,9 +115,20 @@ export interface Vcs {
    * overwrite an untracked file, or while a tracked file has changes: an
    * adapter may refuse any such change, as the memory one does, though git
    * refuses only those the branch would touch.
+   *
+   * A name is only ever a branch, never a path: `git checkout a.yaml` with no
+   * such branch would throw away the changes to `a.yaml`, so a git adapter
+   * uses `git switch` or `git checkout <branch> --`.
+   *
+   * @throws when there is no such branch, or the switch would lose changes
    */
   checkout(branch: string): Promise<void>;
-  /** Creates a branch from the current commit and switches to it. Refuses `x/y` next to `x`, as git does. */
+  /**
+   * Creates a branch from the current commit and switches to it.
+   *
+   * @throws when a branch of that name already exists, or it would sit next
+   *   to `x` as `x/y` or the other way round, which git refuses
+   */
   createBranch(name: string): Promise<void>;
   /** Make the folder a repository, ignoring `.studio`, the folder Halonic keeps its runtime data in. */
   init(): Promise<void>;
