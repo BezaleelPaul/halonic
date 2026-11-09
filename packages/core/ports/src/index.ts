@@ -56,6 +56,24 @@ export {
   harnessBridgeTokenHeader,
   harnessVersion,
 } from "./harness.ts";
+export {
+  type BridgeApprovalDecision,
+  type BridgeApprovalRequest,
+  type BridgeApprovals,
+  type BridgeEvent,
+  type BridgeModelPrice,
+  type BridgeProvider,
+  type BridgeProviderAccess,
+  type BridgeRecorder,
+  type BridgeToolCheck,
+  type BridgeToolResult,
+  type BridgeTools,
+  bridgeCallCost,
+  type HarnessBridgeOptions,
+  type HarnessBridgeServer,
+  harnessBridgeServerVersion,
+  type OpenHarnessBridge,
+} from "./harness-bridge-server.ts";
 export { type HttpClient, httpClientVersion } from "./http-client.ts";
 export { type IdGenerator, idGeneratorVersion } from "./id-generator.ts";
 export {
