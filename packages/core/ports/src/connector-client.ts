@@ -125,9 +125,26 @@ export type ConnectorTransport =
        * that can move the registry or run code before the package:
        * `NODE_OPTIONS`, `NODE_PATH`, `PYTHONPATH`, `PYTHONSTARTUP`,
        * `PYTHONHOME`, or any name starting with `npm_config_`, `YARN_`,
-       * `PNPM_`, `BUN_`, `COREPACK_`, `UV_`, `PIP_` or `PIPX_`. It drops
-       * those it inherits from its own process and sets the registry from
-       * `registryUrl` itself.
+       * `PNPM_`, `BUN_`, `COREPACK_`, `UV_`, `PIP_` or `PIPX_`; a proxy,
+       * `HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY`; a certificate setting,
+       * `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`,
+       * `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE` or
+       * `CURL_CA_BUNDLE`; or a preload, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
+       * `DYLD_INSERT_LIBRARIES` or `DYLD_LIBRARY_PATH`. It drops the
+       * package-manager and language variables it inherits from its own
+       * process and sets the registry from `registryUrl` itself. It keeps an
+       * inherited proxy, certificate or preload: those are the person's own
+       * machine settings, such as a company proxy, not the workspace's.
+       *
+       * And it refuses to start when an argument is a runner option that
+       * fetches from somewhere else: `--registry`, an npm scope's
+       * `--@<scope>:registry`, `--userconfig`, `--globalconfig`, `--cache`,
+       * `--index-url` (`-i`), `--extra-index-url`, `--index`,
+       * `--default-index`, `--find-links` (`-f`), `--config-file`,
+       * `--cache-dir` or `--pip-args`.
+       *
+       * Every stdio launcher checks these rules with `@halonicjs/app`'s
+       * `checkPackageRunnerLaunch`, so they live in one place.
        */
       pin?: ConnectorPin;
     }
