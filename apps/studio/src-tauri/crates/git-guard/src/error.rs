@@ -23,12 +23,18 @@ pub enum GitError {
         subcommand: String,
         argument: String,
     },
+    /// A `commit` without `-m` or `--message`, and not `--amend --no-edit`.
+    MessageRequired,
     /// The folder is not inside a folder the user opened.
     FolderNotOpened,
     /// The folder does not exist or cannot be read.
     FolderUnreadable,
-    /// git could not list the config the call would run with.
+    /// git could not list the repository's config or its index, so the
+    /// runner can't know what to neutralise.
     RepositoryUnreadable,
+    /// The repository's own config sets a key no override reaches, such as
+    /// `branch.<name>.mergeOptions`.
+    ConfigNotAllowed { key: String },
     /// The empty hooks folder has files in it, so it no longer stops hooks.
     HooksFolderNotEmpty,
     /// The empty hooks folder is gone or cannot be read.
@@ -55,9 +61,11 @@ impl GitError {
             GitError::ValueNotAllowed { .. } => "value_not_allowed",
             GitError::MissingValue { .. } => "missing_value",
             GitError::ArgumentNotAllowed { .. } => "argument_not_allowed",
+            GitError::MessageRequired => "message_required",
             GitError::FolderNotOpened => "folder_not_opened",
             GitError::FolderUnreadable => "folder_unreadable",
             GitError::RepositoryUnreadable => "repository_unreadable",
+            GitError::ConfigNotAllowed { .. } => "config_not_allowed",
             GitError::HooksFolderNotEmpty => "hooks_folder_not_empty",
             GitError::HooksFolderUnreadable => "hooks_folder_unreadable",
             GitError::GitTooOld => "git_too_old",
@@ -100,10 +108,20 @@ impl fmt::Display for GitError {
                     "git {subcommand}: argument {argument} is not allowed"
                 )
             }
+            GitError::MessageRequired => write!(
+                formatter,
+                "git commit needs -m or --message, or --amend --no-edit"
+            ),
             GitError::FolderNotOpened => write!(formatter, "the folder is not an opened folder"),
             GitError::FolderUnreadable => write!(formatter, "the folder cannot be read"),
             GitError::RepositoryUnreadable => {
-                write!(formatter, "the repository's config cannot be read")
+                write!(formatter, "the repository's config or index cannot be read")
+            }
+            GitError::ConfigNotAllowed { key } => {
+                write!(
+                    formatter,
+                    "the repository's config sets {key}, which is not allowed"
+                )
             }
             GitError::HooksFolderNotEmpty => write!(formatter, "the empty hooks folder has files"),
             GitError::HooksFolderUnreadable => {
