@@ -3,6 +3,10 @@ export { MemoryBlobStore } from "./blob-store.ts";
 export { ManualClock, manualClockStart } from "./clock.ts";
 export { MemoryCoordination } from "./coordination.ts";
 export { MemoryDefinitionStore } from "./definition-store.ts";
+export {
+  DryRunDefinitionStore,
+  type PlannedDefinitionChange,
+} from "./dry-run-definition-store.ts";
 export { fixedIds } from "./ids.ts";
 export { type MemoryKnowledgeOptions, MemoryKnowledgeProvider } from "./knowledge-provider.ts";
 export { ScriptedLlmProvider, type ScriptedLlmProviderOptions } from "./llm-provider.ts";
