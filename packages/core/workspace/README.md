@@ -77,6 +77,12 @@ connector's name and description are left out.
 canonical JSON, so key order doesn't count and `["a b"]` never matches `["a", "b"]`. Each behaviour
 has a requirement in [`requirements/`](requirements/).
 
+When the fingerprint no longer matches, `trustChanges` compares the trusted content with the current
+one and lists the new, changed and removed connectors, so the prompt can show New and Changed first.
+Only removing whole connectors lets the record shrink without asking (HAL-65 decision 9). Any change
+inside a connector asks again, even one that takes something out of the file, because dropping a
+tool from `approve`, the `allow` list or a variable can let the connector do more.
+
 ### Example: trust content
 
 The trust content of a made-up `acme` connector. This example is
