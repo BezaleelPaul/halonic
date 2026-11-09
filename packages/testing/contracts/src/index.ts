@@ -84,7 +84,11 @@ export {
   startScheduler,
   type TimerBehaviour,
 } from "./scheduler-harness.ts";
-export { invalidSecretNames, longestSecretName } from "./secret-names.ts";
+export {
+  invalidSecretNames,
+  longestSecretName,
+  unquotableSecretNames,
+} from "./secret-names.ts";
 export {
   type MakeSecrets,
   type MakeTokenStore,
