@@ -31,6 +31,7 @@
 /* The selection and high-contrast utilities (selected-bar, selected-forced, the forced disabled
    colours) live in their own file. */
 @import "./theme-selection.css";
+@import "./checkbox/checkbox.css";
 
 :root {
   color-scheme: light dark;
