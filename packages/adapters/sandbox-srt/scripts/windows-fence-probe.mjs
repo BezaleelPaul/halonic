@@ -5,8 +5,10 @@
 //
 // It works outside the user profile (RUNNER_TEMP in CI), because the sandbox
 // account cannot look inside the profile of the user who ran the install.
-// Run from this package after `windows-install`. Exit code 0 means fenced.
-import { spawnSync } from "node:child_process";
+// Run from this package after `windows-install`. Exit codes: 0 fenced, 1 a leak
+// was observed, 2 or 3 the probes did not run (port in the proxy range, or the
+// program inside gave no result), so a retry is allowed.
+import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -71,17 +73,27 @@ writeFileSync(
   }),
 );
 
-const run = spawnSync(
-  process.execPath,
-  [srtCli, "-s", settings, "-c", `"${process.execPath}" "${child}"`],
-  { encoding: "utf8", timeout: 120_000 },
-);
-server.close();
+// Async spawn: spawnSync would block the event loop, so the canary server could
+// never count a connection made while srt runs.
+const run = await new Promise((done) => {
+  const proc = spawn(
+    process.execPath,
+    [srtCli, "-s", settings, "-c", `"${process.execPath}" "${child}"`],
+    { timeout: 120_000 },
+  );
+  let stdout = "";
+  let stderr = "";
+  proc.stdout.setEncoding("utf8").on("data", (d) => (stdout += d));
+  proc.stderr.setEncoding("utf8").on("data", (d) => (stderr += d));
+  proc.on("error", () => done({ status: null, stdout, stderr }));
+  proc.on("close", (status) => done({ status, stdout, stderr }));
+});
+await new Promise((done) => server.close(done));
 console.log(`srt exit code: ${run.status}`);
 console.log(`stdout: ${run.stdout}`);
 console.log(`stderr: ${run.stderr}`);
 
-// One pass/fail line per case, for the job summary (the job reports only).
+// One pass/fail line per case, for the job summary (the job fails on a leak).
 function writeSummary(cases) {
   const lines = cases.map(([name, ok]) => `- ${ok ? "PASS" : "FAIL"}: ${name}`);
   console.log(lines.join("\n"));
@@ -97,11 +109,17 @@ let result;
 try {
   result = JSON.parse(run.stdout.trim().split(/\r?\n/).pop());
 } catch {
+  // A host-side connection is an observed leak even when the child printed nothing.
+  if (connections !== 0) {
+    writeSummary([["canary port saw no connection", false]]);
+    console.error(`NOT FENCED: the canary port saw ${connections} connection(s).`);
+    process.exit(1);
+  }
   writeSummary([["the program inside the sandbox gave a result", false]]);
   console.error(
     "NOT FENCED: the program inside the sandbox gave no result, so the probes did not run.",
   );
-  process.exit(1);
+  process.exit(3);
 }
 writeSummary([
   ["control write worked", result.control === true],
