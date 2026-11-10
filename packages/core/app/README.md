@@ -119,6 +119,7 @@ export async function runExample(): Promise<string[]> {
     store,
     reviewRecords: new MapStore(new Map()),
     digest,
+    isTrusted: () => true,
     onListenerError: (error) => {
       throw error;
     },
