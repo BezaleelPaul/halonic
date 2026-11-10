@@ -1444,6 +1444,9 @@ importers:
       '@halonicjs/ports':
         specifier: workspace:*
         version: link:../ports
+      '@halonicjs/std':
+        specifier: workspace:*
+        version: link:../std
       '@halonicjs/workspace':
         specifier: workspace:*
         version: link:../workspace
