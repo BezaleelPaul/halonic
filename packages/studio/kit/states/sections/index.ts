@@ -11,6 +11,7 @@ import { externalLinkSection } from "./external-link.tsx";
 import { fieldSection } from "./field.tsx";
 import { filterChipsSection } from "./filter-chips.tsx";
 import { formRowsSection } from "./form-rows.tsx";
+import { headerBadgeSection } from "./header-badge.tsx";
 import { iconTileSection } from "./icon-tile.tsx";
 import { inputLeadingSection } from "./input-leading.tsx";
 import { kbdSection } from "./kbd.tsx";
@@ -55,6 +56,7 @@ export const SECTIONS: readonly PartSection[] = [
   sliderSection,
   formRowsSection,
   radioSection,
+  headerBadgeSection,
   copyButtonSection,
   externalLinkSection,
   windowSection,
