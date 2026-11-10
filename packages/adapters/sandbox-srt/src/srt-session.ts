@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import { skillScriptsRefusal, touchesSkillScripts } from "@halonicjs/format";
 import type {
   SandboxBlockListener,
@@ -14,7 +14,12 @@ import type {
 } from "@halonicjs/ports";
 import { proveFence } from "./fence-proof.ts";
 import { gitPathsToDeny } from "./git-deny-paths.ts";
-import { type GitFolderSnapshot, restoreGitFolder, snapshotGitFolder } from "./git-folder-check.ts";
+import {
+  type GitFolderSnapshot,
+  restoreGitFolder,
+  snapshotGitFolder,
+  writeJournal,
+} from "./git-folder-check.ts";
 import { type NestedGitSnapshot, snapshotNestedGit, undoNestedGit } from "./nested-git-check.ts";
 import { buildSrtConfig } from "./srt-config.ts";
 import { nodePaths, type Runner, type RunningProgram } from "./srt-runner.ts";
@@ -171,6 +176,7 @@ export class SrtSession implements SandboxSession {
   readonly #detach: () => void;
   readonly #gitFolder: GitFolderSnapshot | null;
   readonly #nestedGit: NestedGitSnapshot | null;
+  readonly #journal: string | null;
   #fence: SandboxFence;
   #closing: Promise<void> | null = null;
   #timedOut = false;
@@ -183,6 +189,7 @@ export class SrtSession implements SandboxSession {
     fence: SandboxFence,
     signal: AbortSignal | undefined,
     git: { folder: GitFolderSnapshot | null; nested: NestedGitSnapshot | null },
+    journal: string | null,
   ) {
     this.profile = profile;
     this.#runner = runner;
@@ -191,6 +198,7 @@ export class SrtSession implements SandboxSession {
     this.#fence = fence;
     this.#gitFolder = git.folder;
     this.#nestedGit = git.nested;
+    this.#journal = journal;
     this.#launcherEnv = launcherEnv(profile, process.env, folder);
     this.#programEnv = programEnv(profile, process.env, folder);
     this.#timer = setTimeout(() => void this.#expire(), profile.timeLimitMs);
@@ -210,7 +218,7 @@ export class SrtSession implements SandboxSession {
   static async open(
     profile: SandboxProfile,
     runner: Runner,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; journalFolder?: string | null } = {},
   ): Promise<SrtSession> {
     const startedAt = Date.now();
     assertVariableNames(profile);
@@ -220,9 +228,18 @@ export class SrtSession implements SandboxSession {
       nested: await snapshotNestedGit(profile.workingFolder),
     };
     const folder = await mkdtemp(join(tmpdir(), "halonic-srt-"));
+    const { journalFolder = null } = options;
+    let journal: string | null = null;
     try {
+      if (git.folder !== null && journalFolder !== null) {
+        journal = await writeJournal(journalFolder, basename(folder), git.folder);
+      }
       const settingsPath = join(folder, "settings.json");
-      const config = buildSrtConfig(profile, [folder], await gitPathsToDeny(profile.workingFolder));
+      const config = buildSrtConfig(
+        profile,
+        journalFolder === null ? [folder] : [folder, journalFolder],
+        await gitPathsToDeny(profile.workingFolder),
+      );
       await writeFile(settingsPath, JSON.stringify(config), { mode: 0o600 });
       const fence = await proveFence({
         runner,
@@ -246,10 +263,12 @@ export class SrtSession implements SandboxSession {
         fence,
         options.signal,
         git,
+        journal,
       );
       return session;
     } catch (error) {
       await rm(folder, { recursive: true, force: true });
+      if (journal !== null) await rm(journal, { force: true });
       throw error;
     }
   }
@@ -327,6 +346,8 @@ export class SrtSession implements SandboxSession {
     this.#fence = { state: "stopped" };
     this.#listeners.clear();
     await rm(this.#folder, { recursive: true, force: true });
+    // A journal whose undo failed stays, so a later `recoverGitFolders` tries again.
+    if (this.#journal !== null && failed.length === 0) await rm(this.#journal, { force: true });
     if (failed.length > 0) {
       throw new Error(`Could not undo a change to the git folder: ${failed.join(", ")}`);
     }
