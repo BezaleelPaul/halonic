@@ -335,6 +335,9 @@ importers:
 
   apps/studio:
     dependencies:
+      '@halonicjs/schema-kit':
+        specifier: workspace:*
+        version: link:../../packages/core/schema-kit
       '@halonicjs/studio-feature-inbox':
         specifier: workspace:*
         version: link:../../packages/studio/features/inbox
