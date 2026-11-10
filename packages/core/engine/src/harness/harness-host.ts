@@ -29,6 +29,7 @@ export type PlacementAnswer =
 
 /** The agent a harness question is about. */
 export interface HarnessAgent {
+  /** The run the agent works in; for a chat turn, which has no run, the turn's own id (`chat_…`). */
   readonly runId: string;
   readonly hubId: string;
   readonly agentId: string;
