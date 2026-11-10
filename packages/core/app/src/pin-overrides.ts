@@ -15,11 +15,14 @@ interface VariableGroup {
  * config file or another cache, a folder whose config or installed packages
  * the runner reads, a requirements file, a host it may reach without TLS,
  * or another proxy or certificate. Compared in lowercase, before any `=`.
+ * `--reg` is npm's shortened `--registry`; the other shortened spellings
+ * are refused by `checkAllowedOptions`, which allows only a few options.
  * `-i` and `-f` are the short forms of `--index-url` and `--find-links`;
  * `-c` stands for npm's `-C` (`--prefix`) and pnpm's `-C` (`--dir`).
  */
 const registryOptions = new Set([
   "--registry",
+  "--reg",
   "--userconfig",
   "--globalconfig",
   "--cache",
@@ -70,12 +73,14 @@ const shellOptions = new Set(["-c", "--call", "--shell-mode"]);
  * with the reason a refusal gives. A name is in a group when it is one of
  * its `names` or starts with one of its `prefixes`.
  */
+const packageManagerVariables: VariableGroup = {
+  names: new Set(["node_options", "node_path", "pythonpath", "pythonstartup", "pythonhome"]),
+  prefixes: ["npm_config_", "yarn_", "pnpm_", "bun_", "corepack_", "uv_", "pip_", "pipx_"],
+  reason: "could move the registry or run code before the pinned package",
+};
+
 const blockedVariables: readonly VariableGroup[] = [
-  {
-    names: new Set(["node_options", "node_path", "pythonpath", "pythonstartup", "pythonhome"]),
-    prefixes: ["npm_config_", "yarn_", "pnpm_", "bun_", "corepack_", "uv_", "pip_", "pipx_"],
-    reason: "could move the registry or run code before the pinned package",
-  },
+  packageManagerVariables,
   {
     names: new Set(["https_proxy", "http_proxy", "all_proxy"]),
     prefixes: [],
@@ -129,6 +134,17 @@ export function findBlockedVariables(
     }
   }
   return undefined;
+}
+
+/**
+ * Whether a variable is a package-manager or language setting, in any case,
+ * such as `NODE_OPTIONS` or `npm_config_registry`. A pinned launch drops
+ * these when it inherits them from its own process, and sets the registry
+ * itself. It keeps an inherited proxy, certificate or preload, which are the
+ * person's own machine settings (`ports.connector-trust-enforcement`).
+ */
+export function isPackageManagerVariable(name: string): boolean {
+  return isInGroup(packageManagerVariables, name);
 }
 
 /** The words that set a registry option, in the order they appear. */

@@ -153,6 +153,93 @@ verifies("app.package-runner-launch", () => {
     }
   });
 
+  it("refuses a pinned runner whose command word is another package than the pin's", () => {
+    expect(refused(stdio({ pin, args: ["-y", "other-pkg", "@acme/mail-mcp"] }))).toBe(
+      'the command starts "other-pkg", but the pin is for "@acme/mail-mcp"',
+    );
+    const pypiPin: ConnectorPin = { ...pin, registry: "pypi", package: "mail-mcp" };
+    const uvx = stdio({ pin: pypiPin, command: "uvx", args: ["other-tool", "mail-mcp"] });
+    expect(refused(uvx)).toContain('starts "other-tool"');
+    const python = stdio({ pin: pypiPin, command: "uvx", args: ["--python", "3.12", "mail-mcp"] });
+    expect(refused(python)).toContain('starts "3.12"');
+  });
+
+  it("refuses a package option after the command word, before a --", () => {
+    expect(refused(stdio({ pin, args: ["-y", "@acme/mail-mcp", "-p", "@acme/mail-mcp"] }))).toBe(
+      'the command sets -p after "@acme/mail-mcp", which one runner reads as its own option and another passes on, so a pin can\'t be checked',
+    );
+    const pypiPin: ConnectorPin = { ...pin, registry: "pypi", package: "mail-mcp" };
+    const refusedArgs: [string, ConnectorPin, string[]][] = [
+      ["uvx", pypiPin, ["mail-mcp", "--from", "mail-mcp"]],
+      ["uvx", pypiPin, ["mail-mcp", "--with=mail-mcp"]],
+      ["npm", pin, ["exec", "@acme/mail-mcp", "--package", "@acme/mail-mcp"]],
+      ["pipx", pypiPin, ["run", "mail-mcp", "--spec", "mail-mcp"]],
+    ];
+    for (const [command, commandPin, args] of refusedArgs) {
+      const transport = stdio({ pin: commandPin, command, args });
+      expect(refused(transport), `${command} ${args.join(" ")}`).toContain(
+        "a pin can't be checked",
+      );
+    }
+    const afterDashes = ["-y", "--", "@acme/mail-mcp", "-p", "work"];
+    expect(checkPackageRunnerLaunch(stdio({ pin, args: afterDashes }))).toEqual({
+      ok: true,
+      value: pin,
+    });
+  });
+
+  it("refuses --reg, npm's shortened --registry, wherever it stands", () => {
+    const args = ["-y", "--reg=http://evil.test/", "@acme/mail-mcp"];
+    expect(refused(stdio({ pin, args }))).toBe(
+      "the command sets --reg=http://evil.test/, which could fetch the pinned package from somewhere other than https://registry.npmjs.org",
+    );
+    const late = ["exec", "@acme/mail-mcp", "--reg", "http://evil.test/"];
+    expect(refused(stdio({ pin, command: "npm", args: late }))).toContain(
+      "could fetch the pinned package from somewhere other than",
+    );
+  });
+
+  it("refuses an option before the command word that a pinned runner doesn't allow", () => {
+    expect(
+      refused(stdio({ pin, args: ["-y", "--regis=http://evil.test/", "@acme/mail-mcp"] })),
+    ).toBe(
+      'the command sets --regis, which a pinned "npx" doesn\'t take: it may only set -y, --yes, -q, --quiet, --silent, -p, --package',
+    );
+    const pypiPin: ConnectorPin = { ...pin, registry: "pypi", package: "mail-mcp" };
+    const refusedArgs: [string, ConnectorPin, string[]][] = [
+      ["npx", pin, ["--YES", "@acme/mail-mcp"]],
+      ["npx", pin, ["-yq", "@acme/mail-mcp"]],
+      ["npm", pin, ["--loglevel=silly", "exec", "@acme/mail-mcp"]],
+      ["pnpm", pin, ["dlx", "--regi=http://evil.test/", "@acme/mail-mcp"]],
+      ["yarn", pin, ["dlx", "--cache-folder=./evil", "@acme/mail-mcp"]],
+      ["bunx", pin, ["--registry-url", "@acme/mail-mcp"]],
+      ["uvx", pypiPin, ["--offline", "mail-mcp"]],
+      ["pipx", pypiPin, ["run", "--ind=http://evil.test/", "mail-mcp"]],
+    ];
+    for (const [command, commandPin, args] of refusedArgs) {
+      const transport = stdio({ pin: commandPin, command, args });
+      expect(refused(transport), `${command} ${args.join(" ")}`).toContain("doesn't take");
+    }
+  });
+
+  it("refuses an option after the command word that npm exec reads as its own", () => {
+    const args = ["exec", "@acme/mail-mcp", "--regis=http://evil.test/"];
+    expect(refused(stdio({ pin, command: "npm", args }))).toBe(
+      'the command sets --regis, which a pinned "npm" doesn\'t take: it may only set -y, --yes, -q, --quiet, --silent, -p, --package',
+    );
+    const passedOn: [string, string[]][] = [
+      ["npx", ["-y", "@acme/mail-mcp", "--regis=work", "--inbox", "work"]],
+      ["npm", ["exec", "--yes", "@acme/mail-mcp", "--", "--inbox", "work"]],
+      ["pnpm", ["dlx", "@acme/mail-mcp", "--inbox", "work"]],
+    ];
+    for (const [command, words] of passedOn) {
+      expect(checkPackageRunnerLaunch(stdio({ pin, command, args: words })), command).toEqual({
+        ok: true,
+        value: pin,
+      });
+    }
+  });
+
   it("passes a pinned runner whose -p or --from runs the pin's own program", () => {
     const passing: [string, string[]][] = [
       ["npx", ["-y", "-p", "@acme/mail-mcp@2.3.1", "@acme/mail-mcp"]],
