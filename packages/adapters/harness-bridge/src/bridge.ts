@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
+  type BridgeEvent,
+  type BridgeRecorder,
   type HarnessBridgeOptions,
   harnessBridgeTokenHeader,
   type OpenHarnessBridge,
@@ -17,6 +19,12 @@ const loopbackHost = "127.0.0.1";
 export interface BridgeSettings {
   limits: BodyLimits;
   routes: readonly BridgeRoute[];
+  /**
+   * How long `close()` waits for the routes still handling a request, such
+   * as one recording its spend, once their requests are aborted, in
+   * milliseconds.
+   */
+  closeTimeoutMs: number;
 }
 
 /**
@@ -30,14 +38,22 @@ export async function openBridge(
 ): Promise<OpenHarnessBridge> {
   const token = randomRunToken();
   const closing = new AbortController();
+  const handlers = new Set<Promise<void>>();
+  const recorder = new ClosingRecorder(run.recorder);
+  const context = { run: { ...run, recorder }, settings, token, closing: closing.signal };
   const server = createServer((request, response) => {
-    void serve({ run, settings, token, closing: closing.signal }, request, response);
+    const handler = serve(context, request, response);
+    handlers.add(handler);
+    void handler.finally(() => handlers.delete(handler));
   });
   const port = await listenOnLoopback(server);
 
   let closed: Promise<void> | undefined;
   const close = (): Promise<void> => {
-    closed ??= stopServer(server, closing);
+    closed ??= (async () => {
+      await Promise.all([stopServer(server, closing), settled(handlers, settings.closeTimeoutMs)]);
+      await recorder.close();
+    })();
     return closed;
   };
   const onRunAborted = () => void close();
@@ -138,4 +154,57 @@ function stopServer(server: Server, closing: AbortController): Promise<void> {
     server.close(() => resolve());
     server.closeAllConnections();
   });
+}
+
+/**
+ * The run's recorder as the routes see it. Once closed it refuses new events,
+ * and `close()` resolves only after the events it had already accepted have
+ * landed: the engine counts the run as finished then, so nothing may land
+ * after that, not even from a route still running past the close time limit.
+ */
+class ClosingRecorder implements BridgeRecorder {
+  readonly #inner: BridgeRecorder;
+  readonly #recording = new Set<Promise<void>>();
+  #closed = false;
+
+  constructor(inner: BridgeRecorder) {
+    this.#inner = inner;
+  }
+
+  record(event: BridgeEvent): Promise<void> {
+    if (this.#closed) {
+      return Promise.reject(
+        new KindedError("conflict", "The bridge has closed, so it records nothing more."),
+      );
+    }
+    const recording = this.#inner.record(event);
+    this.#recording.add(recording);
+    void recording.then(
+      () => this.#recording.delete(recording),
+      () => this.#recording.delete(recording),
+    );
+    return recording;
+  }
+
+  /** Refuses new events and waits for those already accepted. */
+  async close(): Promise<void> {
+    this.#closed = true;
+    await Promise.allSettled(this.#recording);
+  }
+}
+
+/**
+ * Waits until every handler still running has settled, or until `timeoutMs`
+ * has passed, so a stuck handler can't hold up the end of the run.
+ */
+async function settled(handlers: ReadonlySet<Promise<void>>, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeUp = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled(handlers), timeUp]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

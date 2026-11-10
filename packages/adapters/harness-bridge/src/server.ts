@@ -4,6 +4,7 @@ import type {
   OpenHarnessBridge,
   Secrets,
 } from "@halonicjs/ports";
+import { KindedError } from "@halonicjs/std";
 import { anthropicRoute } from "./anthropic-route.ts";
 import { openBridge } from "./bridge.ts";
 import type { Fetch, UpstreamLimits } from "./pass-through.ts";
@@ -25,6 +26,13 @@ export const defaultUpstreamLimits: Readonly<UpstreamLimits> = Object.freeze({
   idleTimeoutMs: 2 * 60_000,
 });
 
+/**
+ * How long `close()` waits for requests still being handled unless it is
+ * given another time. Recording a call's spend takes a moment; a handler
+ * stuck for longer than this mustn't hold up the end of the run.
+ */
+export const defaultCloseTimeoutMs = 5_000;
+
 /** How to set up {@link NodeHarnessBridgeServer}. */
 export interface NodeHarnessBridgeServerOptions {
   /** Where the bridge reads the provider keys an agent's `providers` name. */
@@ -35,6 +43,11 @@ export interface NodeHarnessBridgeServerOptions {
   upstreamLimits?: Partial<UpstreamLimits>;
   /** Calls the providers; Node's own `fetch` unless a test gives another. */
   fetch?: Fetch;
+  /**
+   * How long `close()` waits for requests still being handled, in
+   * milliseconds: a whole number, 0 or more.
+   */
+  closeTimeoutMs?: number;
 }
 
 /**
@@ -54,9 +67,11 @@ export interface NodeHarnessBridgeServerOptions {
 export class NodeHarnessBridgeServer implements HarnessBridgeServer {
   readonly #limits: BodyLimits;
   readonly #routes: readonly BridgeRoute[];
+  readonly #closeTimeoutMs: number;
 
   constructor(options: NodeHarnessBridgeServerOptions) {
     this.#limits = { ...defaultBridgeLimits, ...options.limits };
+    this.#closeTimeoutMs = checkedCloseTimeout(options.closeTimeoutMs ?? defaultCloseTimeoutMs);
     const upstream = {
       fetch: options.fetch ?? globalThis.fetch,
       limits: { ...defaultUpstreamLimits, ...options.upstreamLimits },
@@ -67,6 +82,21 @@ export class NodeHarnessBridgeServer implements HarnessBridgeServer {
 
   /** Starts serving one run. */
   open(options: HarnessBridgeOptions): Promise<OpenHarnessBridge> {
-    return openBridge(options, { limits: this.#limits, routes: this.#routes });
+    return openBridge(options, {
+      limits: this.#limits,
+      routes: this.#routes,
+      closeTimeoutMs: this.#closeTimeoutMs,
+    });
   }
+}
+
+/** `timeoutMs` when it is a whole number of milliseconds, 0 or more. */
+function checkedCloseTimeout(timeoutMs: number): number {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+    throw new KindedError(
+      "invalid_input",
+      `The bridge's close time limit must be a whole number of milliseconds, 0 or more, not ${timeoutMs}.`,
+    );
+  }
+  return timeoutMs;
 }

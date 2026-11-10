@@ -1,6 +1,6 @@
-import type { OpenHarnessBridge } from "@halonicjs/ports";
+import type { BridgeEvent, HarnessBridgeOptions, OpenHarnessBridge } from "@halonicjs/ports";
 import { verifies } from "@halonicjs/testing-spec";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type BridgeSettings, openBridge } from "./bridge.ts";
 import { fakeRun, send } from "./fakes.test-helper.ts";
 import type { BridgeRequestContext, BridgeRoute } from "./route.ts";
@@ -15,17 +15,93 @@ const echo: BridgeRoute = {
   },
 };
 
-const settings: BridgeSettings = { limits: { maxBytes: 16, timeoutMs: 5_000 }, routes: [echo] };
+const settings: BridgeSettings = {
+  limits: { maxBytes: 16, timeoutMs: 5_000 },
+  routes: [echo],
+  closeTimeoutMs: 1_000,
+};
 
 const opened: OpenHarnessBridge[] = [];
 
 async function open(routes: readonly BridgeRoute[] = [echo], signal?: AbortSignal) {
-  const bridge = await openBridge(fakeRun(signal), { ...settings, routes });
+  return openWith(fakeRun(signal), { ...settings, routes });
+}
+
+async function openWith(run: HarnessBridgeOptions, given: BridgeSettings) {
+  const bridge = await openBridge(run, given);
   opened.push(bridge);
   return bridge;
 }
 
+/**
+ * A run whose recorder keeps the events, each once `landing` resolves, as a
+ * slow log would. `asked` resolves once a route has asked it to record.
+ */
+function recordingRun(landing: Promise<void> = Promise.resolve()) {
+  const recorded: BridgeEvent[] = [];
+  const asked = Promise.withResolvers<void>();
+  const run: HarnessBridgeOptions = {
+    ...fakeRun(),
+    recorder: {
+      record: async (event) => {
+        asked.resolve();
+        await landing;
+        recorded.push(event);
+      },
+    },
+  };
+  return { run, recorded, asked: asked.promise };
+}
+
+/** One model call's spend, as a route records it. */
+const spend: BridgeEvent = {
+  type: "llm.response",
+  agent: "writer",
+  provider: "anthropic",
+  model: "claude-sonnet-5-5",
+  usage: { inputTokens: 10, outputTokens: 5 },
+  latencyMs: 100,
+  text: "",
+};
+
+/**
+ * A route that waits until its request is aborted, then records `spend`, as
+ * a route does for a reply cut short. Given `stuckUntil`, it ignores the
+ * abort and waits for that instead. `running` resolves once it runs, and
+ * `recording` once it has asked to record, with what the recorder answered.
+ */
+function recordsWhenAborted(stuckUntil?: Promise<void>) {
+  const running = Promise.withResolvers<void>();
+  const recording = Promise.withResolvers<{ answer: Promise<void> }>();
+  const route: BridgeRoute = {
+    ...echo,
+    handle: async ({ run, signal }) => {
+      running.resolve();
+      await (stuckUntil ??
+        new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true }),
+        ));
+      const answer = run.recorder.record(spend);
+      recording.resolve({ answer });
+      await answer;
+    },
+  };
+  return { route, running: running.promise, recording: recording.promise };
+}
+
+/** True once `promise` has settled; looks after one turn of the event loop. */
+async function hasSettled(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void promise.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  return settled;
+}
+
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(opened.splice(0).map((bridge) => bridge.close()));
 });
 
@@ -157,7 +233,7 @@ verifies("harness-bridge.server", () => {
         handle: ({ signal }) => {
           seen = signal;
           started();
-          return new Promise(() => {});
+          return new Promise((resolve) => signal.addEventListener("abort", () => resolve()));
         },
       };
       const bridge = await open([hanging]);
@@ -167,6 +243,61 @@ verifies("harness-bridge.server", () => {
       expect(seen?.aborted).toBe(true);
       expect(await pending).toBeInstanceOf(Error);
       await expect(send(bridge, "/echo", { token: bridge.token })).rejects.toThrow();
+    });
+
+    it("waits for a route still recording its spend before it resolves", async () => {
+      const landing = Promise.withResolvers<void>();
+      const { run, recorded, asked } = recordingRun(landing.promise);
+      const slow = recordsWhenAborted();
+      const bridge = await openWith(run, { ...settings, routes: [slow.route] });
+      void send(bridge, "/echo", { token: bridge.token }).catch(() => {});
+      await slow.running;
+
+      const closing = bridge.close();
+      await asked;
+      expect(await hasSettled(closing)).toBe(false);
+      landing.resolve();
+      await closing;
+      expect(recorded).toEqual([spend]);
+    });
+
+    it("stops waiting for a stuck route at the time limit, and records nothing after", async () => {
+      const { run, recorded } = recordingRun();
+      const unstuck = Promise.withResolvers<void>();
+      const stuck = recordsWhenAborted(unstuck.promise);
+      const bridge = await openWith(run, { ...settings, routes: [stuck.route] });
+      void send(bridge, "/echo", { token: bridge.token }).catch(() => {});
+      await stuck.running;
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const closing = bridge.close();
+      await vi.advanceTimersByTimeAsync(settings.closeTimeoutMs - 1);
+      expect(await hasSettled(closing)).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await closing;
+
+      unstuck.resolve();
+      const { answer } = await stuck.recording;
+      await expect(answer).rejects.toMatchObject({ kind: "conflict" });
+      expect(recorded).toEqual([]);
+    });
+
+    it("waits past the time limit for an event it had already accepted", async () => {
+      const landing = Promise.withResolvers<void>();
+      const { run, recorded, asked } = recordingRun(landing.promise);
+      const slow = recordsWhenAborted();
+      const bridge = await openWith(run, { ...settings, routes: [slow.route] });
+      void send(bridge, "/echo", { token: bridge.token }).catch(() => {});
+      await slow.running;
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const closing = bridge.close();
+      await asked;
+      await vi.advanceTimersByTimeAsync(settings.closeTimeoutMs);
+      expect(await hasSettled(closing)).toBe(false);
+      landing.resolve();
+      await closing;
+      expect(recorded).toEqual([spend]);
     });
 
     it("closes when the run's signal aborts, even before it opened", async () => {
