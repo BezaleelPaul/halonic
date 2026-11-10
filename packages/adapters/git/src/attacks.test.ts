@@ -191,6 +191,11 @@ verifies("git.repo-leaks", () => {
         "http.sslverify",
       ],
       [
+        "a push URL for a remote, in mixed case",
+        '[remote "origin"]\n\tPushURL = ssh://planted.invalid/other.git',
+        "remote.origin.pushurl",
+      ],
+      [
         "a hook in config, in mixed case",
         '[Hook "planted"]\n\tCommand = planted\n\tevent = pre-commit',
         "hook.planted",
