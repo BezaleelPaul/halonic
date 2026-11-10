@@ -1,4 +1,4 @@
-import type { Connector } from "@halonicjs/format";
+import type { Agent, Connector } from "@halonicjs/format";
 import type { Clock, Digest, TrustRecord } from "@halonicjs/ports";
 import { verifies } from "@halonicjs/testing-spec";
 import { expect, expectTypeOf, it } from "vitest";
@@ -25,7 +25,29 @@ function program(id: string, env: Record<string, string> = {}): Connector {
 }
 
 function subject(...connectors: Connector[]): TrustSubject {
-  return { location, connectors, commandPaths };
+  return { location, connectors, commandPaths, agents: [] };
+}
+
+/** An agent that runs in Claude Code and may reach the given sites. */
+function harnessAgent(allowedSites: string[]): Agent {
+  return {
+    version: 1,
+    id: "coder",
+    name: "Coder",
+    params: {},
+    instructions: "",
+    skills: [],
+    knowledge: [],
+    connectors: [],
+    runLogs: false,
+    collections: [],
+    subagents: [],
+    methods: {},
+    output: { type: "text" },
+    maxSteps: 6,
+    harness: "claude-code",
+    allowedSites,
+  };
 }
 
 function setup() {
@@ -74,7 +96,7 @@ verifies("app.trust-service", () => {
 
     expectStatus(check, "trusted");
     expect(check.grant).toEqual({ location, fingerprint: check.fingerprint });
-    expect(check.shrunk).toEqual([]);
+    expect(check.shrunk).toEqual({ connectors: [], agents: [] });
     expect(await store.get(location)).toMatchObject({
       fingerprint: check.fingerprint,
       grantedAt: "2026-11-09T10:00:00.000Z",
@@ -110,13 +132,30 @@ verifies("app.trust-service", () => {
     const check = await service.check(subject(program("files")));
 
     expectStatus(check, "trusted");
-    expect(check.shrunk).toEqual(["mail"]);
+    expect(check.shrunk).toEqual({ connectors: ["mail"], agents: [] });
     expect(check.grant.fingerprint).toBe(check.fingerprint);
     expect(await store.get(location)).toMatchObject({
       fingerprint: check.fingerprint,
       content: check.content,
       grantedAt: "2026-11-09T10:00:00.000Z",
       pins: {},
+    });
+  });
+
+  it("shrinks the record without asking when only a harness agent is removed, and says so", async () => {
+    const { service, store } = setup();
+    await trustAsPerson(service, { ...subject(program("files")), agents: [harnessAgent([])] });
+    const before = (await store.get(location)) as TrustRecord;
+
+    const check = await service.check(subject(program("files")));
+
+    expectStatus(check, "trusted");
+    expect(check.shrunk).toEqual({ connectors: [], agents: ["coder"] });
+    expect(check.fingerprint).not.toBe(before.fingerprint);
+    expect(await store.get(location)).toMatchObject({
+      fingerprint: check.fingerprint,
+      content: check.content,
+      grantedAt: before.grantedAt,
     });
   });
 
@@ -185,17 +224,35 @@ verifies("app.trust-service", () => {
   it("puts the resolved command in the fingerprint, and can't be called without it", async () => {
     const { service } = setup();
     const connectors = [program("files")];
-    const here = await service.check({ location, connectors, commandPaths });
+    const here = await service.check({ location, connectors, commandPaths, agents: [] });
     const there = await service.check({
       location,
       connectors,
       commandPaths: new Map([["node", "/opt/evil/node"]]),
+      agents: [],
     });
 
     expect(here.fingerprint).not.toBe(there.fingerprint);
     expectTypeOf<TrustSubject["commandPaths"]>().toEqualTypeOf<ReadonlyMap<string, string>>();
     // @ts-expect-error commandPaths is required
-    const missing: TrustSubject = { location, connectors };
+    const missing: TrustSubject = { location, connectors, agents: [] };
+    expect(missing).toBeDefined();
+  });
+
+  it("asks again when a harness agent's sites change, and can't be called without the agents", async () => {
+    const { service } = setup();
+    const coder = harnessAgent(["api.example.com"]);
+    await trustAsPerson(service, { ...subject(program("files")), agents: [coder] });
+
+    const check = await service.check({
+      ...subject(program("files")),
+      agents: [harnessAgent(["api.example.com", "pypi.org"])],
+    });
+
+    expectStatus(check, "changed");
+    expect(check.changes.agents.changed.map((change) => change.fields)).toEqual([["allowedSites"]]);
+    // @ts-expect-error agents is required
+    const missing: TrustSubject = { location, connectors: [], commandPaths };
     expect(missing).toBeDefined();
   });
 
@@ -213,7 +270,7 @@ verifies("app.trust-service", () => {
       runner("crm", "cmd", ["/c", "uvx", "crm-mcp"]),
     ];
 
-    const check = await service.check({ location, connectors, commandPaths });
+    const check = await service.check({ location, connectors, commandPaths, agents: [] });
 
     expectStatus(check, "new");
     expect(check.unpinned).toEqual(["crm", "mail"]);
