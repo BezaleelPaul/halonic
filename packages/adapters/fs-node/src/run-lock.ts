@@ -8,8 +8,14 @@ import { isMissing } from "./links.ts";
 /** How long to wait before trying again to take a lock another writer holds. */
 const retryDelayMs = 15;
 
+/**
+ * The largest process id `process.kill` takes (2³¹ − 1). It refuses larger
+ * ids, so a lock that names one is judged as held by no running process.
+ */
+const maxProcessId = 2 ** 31 - 1;
+
 /** A lock file as found on disk. */
-interface FoundLock {
+export interface FoundLock {
   /** The file's text, as the writer that took the lock wrote it. */
   text: string;
   /** The record in it, or `null` when the text isn't one. */
@@ -92,7 +98,7 @@ async function readLock(file: string): Promise<FoundLock | null> {
 }
 
 /** The record in a lock file, or `null` when the text isn't one. */
-function parseRecord(text: string): RunLockRecord | null {
+export function parseRecord(text: string): RunLockRecord | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -110,20 +116,33 @@ function parseRecord(text: string): RunLockRecord | null {
   return valid ? { version: version as number, pid: pid as number, host, takenAt } : null;
 }
 
+/** What a lock is judged against: this computer's name, and whether a process runs here. */
+export interface ThisComputer {
+  host: string;
+  processRuns(pid: number): boolean;
+}
+
 /**
  * Whether a lock may be removed: older than the limit (or from the future
  * by as much, a clock that was off), or taken on this computer by a process
  * that no longer runs. A file that holds no record yet may be one a writer
- * is still writing, so only its age counts.
+ * is still writing, so only its age counts. The Rust run lock in the Studio
+ * shell judges the same cases alike (`run-lock-cases.json`).
  */
-function isStale(found: FoundLock, now: number): boolean {
+export function isStale(
+  found: FoundLock,
+  now: number,
+  here: ThisComputer = { host: hostname(), processRuns },
+): boolean {
   const takenAt = found.record === null ? found.changedAt : Date.parse(found.record.takenAt);
   if (!(Math.abs(now - takenAt) <= runLockStaleAfterMs)) {
     return true;
   }
-  return (
-    found.record !== null && found.record.host === hostname() && !processRuns(found.record.pid)
-  );
+  if (found.record === null || found.record.host !== here.host) {
+    return false;
+  }
+  const { pid } = found.record;
+  return !(pid <= maxProcessId && here.processRuns(pid));
 }
 
 /** Whether a process with this id runs on this computer. */
