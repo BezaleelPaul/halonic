@@ -158,6 +158,11 @@ export {
 } from "./list-heading/list-heading.tsx";
 export { LongText, type LongTextProps } from "./long-text/long-text.tsx";
 export {
+  ContextMenu,
+  type ContextMenuProps,
+  type ContextMenuTarget,
+} from "./menu/context-menu.tsx";
+export {
   Menu,
   type MenuEntry,
   type MenuItem,
