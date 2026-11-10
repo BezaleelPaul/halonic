@@ -38,7 +38,8 @@ interface LogBefore {
  * append can't land between a compact's read and its rename. A compact
  * writes the new log to a temporary file, flushes it to disk and renames it
  * over the old one, so a crash leaves the old log or the new one. Reads take
- * no lock: a line counts only once its line break is written.
+ * no lock: a line counts only once its line break is written, unless its
+ * append fails and is cut back, so a read may briefly see lines that go away.
  *
  * Like the trust store, a log that is a symbolic link, a hard link or not a
  * plain file is refused, never read or written through (HAL-2978, HAL-3009).
@@ -113,7 +114,7 @@ export class FileRecordStore implements RecordStore {
       const bytes = await intactEnd(handle);
       await handle.truncate(bytes);
       before.push({ file, bytes });
-      await handle.write(lines);
+      await writeAll(handle, file, new TextEncoder().encode(lines));
     } finally {
       await handle.close();
     }
@@ -175,6 +176,25 @@ async function intactEnd(handle: FileHandle): Promise<number> {
   const bytes = new Uint8Array(size);
   const { bytesRead } = await handle.read(bytes, 0, size, 0);
   return bytes.subarray(0, bytesRead).lastIndexOf(lineBreak) + 1;
+}
+
+/**
+ * Writes all of `bytes`, at the end because the handle is opened with
+ * O_APPEND. One write may take only part of them and still succeed, so it
+ * writes again from where the last one stopped. A write that takes nothing
+ * fails the append rather than trying forever.
+ */
+async function writeAll(handle: FileHandle, file: string, bytes: Uint8Array): Promise<void> {
+  let written = 0;
+  while (written < bytes.length) {
+    const { bytesWritten } = await handle.write(bytes, written, bytes.length - written);
+    if (bytesWritten === 0) {
+      throw new Error(
+        `Couldn't append to record log ${JSON.stringify(file)}: the system took none of the last ${bytes.length - written} bytes.`,
+      );
+    }
+    written += bytesWritten;
+  }
 }
 
 /**
