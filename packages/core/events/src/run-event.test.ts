@@ -273,6 +273,8 @@ verifies("events.run-log-contract", () => {
       childRunId: string;
       status: "completed" | "failed";
       error?: string;
+      // Added after the reference by events.workflow-finished-context (HAL-1537).
+      context?: Record<string, unknown>;
     }>();
   });
 
