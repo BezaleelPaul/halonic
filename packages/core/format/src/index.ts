@@ -39,6 +39,19 @@ export {
 } from "./kinds/integration/schema.ts";
 export type { KnowledgeSource } from "./kinds/knowledge/schema.ts";
 export type { ModelAlias, Models } from "./kinds/models/schema.ts";
+export {
+  ARGUMENT_NAME_PATTERN,
+  DEFAULT_BACKEND_ENTRY,
+  ENV_NAME_PATTERN,
+  NPM_EXACT_VERSION_PATTERN,
+  networkSiteProblem,
+  Plugin,
+  type PluginBackend,
+  type PluginLocalTool,
+  type PluginUi,
+  PYPI_EXACT_VERSION_PATTERN,
+  pluginPathProblem,
+} from "./kinds/plugin/schema.ts";
 export type { Provider } from "./kinds/provider/schema.ts";
 export type { Routine, RoutineTarget, RoutineTrigger } from "./kinds/routine/schema.ts";
 export type { Runtime } from "./kinds/runtime/schema.ts";
