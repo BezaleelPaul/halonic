@@ -44,7 +44,7 @@ import { givenDir, openWorkspaceDir } from "../../workspace-dir.ts";
 import { runInputOf } from "./input.ts";
 import { liveLines } from "./live-lines.ts";
 import { runResult, stoppedResult } from "./result.ts";
-import { stuckTimerWatch } from "./stuck-timers.ts";
+import { retriedLine, stuckTimerWatch } from "./stuck-timers.ts";
 import { checkRunTrust, type RunTrustMachine } from "./trust.ts";
 
 /** What `run` uses on this computer, so tests can fix the clock, the ids and the profile. */
@@ -86,7 +86,7 @@ export async function runWorkflow(
   const workspace = await loadWorkspace(dir.store);
   await checkRunTrust(dir, workspace, setup.trust(), typedDir);
   const runInput = await runInputOf(optionText(input, "input"), context.cwd);
-  const stuck = stuckTimerWatch();
+  const stuck = stuckTimerWatch((failure) => context.debug(retriedLine(failure)));
   const engine = await openLocalEngine({
     workspace,
     workspaceRoot: dir.root,
