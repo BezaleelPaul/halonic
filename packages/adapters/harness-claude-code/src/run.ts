@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { outputTail, type SettingsFolderWriter } from "@halonicjs/adapter-harness-kit";
 import type {
   HarnessBridge,
   HarnessEvent,
@@ -16,8 +17,8 @@ import {
   instructionsFileName,
   userMessageLine,
 } from "./command.ts";
-import { outputTail, streamJsonLines } from "./output.ts";
-import { type SettingsFolderWriter, writeClaudeCodeSettings } from "./settings.ts";
+import { streamJsonLines } from "./output.ts";
+import { writeClaudeCodeSettings } from "./settings.ts";
 import { findSignInProblem, SignInError } from "./sign-in.ts";
 import { StreamJsonReader } from "./stream-json.ts";
 
