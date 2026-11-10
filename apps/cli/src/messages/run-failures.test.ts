@@ -1,6 +1,7 @@
 import { verifies } from "@halonicjs/testing-spec";
 import { describe, expect, it } from "vitest";
 import { paintFor } from "../output/paint.ts";
+import { listInWords, timesInWords } from "./counts.ts";
 import { money } from "./money.ts";
 import { plainText, renderPhrase } from "./phrase.ts";
 import { type FailedRun, type RunFailure, runFailedLines } from "./run-failures.ts";
@@ -76,6 +77,11 @@ describe("a failed run's lines, from cli-output 3.4 revision 23", () => {
       "Support reply failed in the step Draft reply: Anthropic was busy and asked Halonic to slow down. Halonic tried 3 times over 2 minutes, then stopped.",
       "Run it again in a few minutes.",
     ]);
+    expect(
+      lines({ reason: "provider-busy", provider: "Anthropic", tries: 1, over: "1 minute" })[0],
+    ).toBe(
+      "Support reply failed in the step Draft reply: Anthropic was busy and asked Halonic to slow down. Halonic tried once over 1 minute, then stopped.",
+    );
     expect(lines({ reason: "model-timeout", provider: "Anthropic", within: "5 minutes" })).toEqual([
       "Support reply failed in the step Draft reply: Anthropic didn't start answering within 5 minutes.",
       "Run it again in a few minutes.",
@@ -131,15 +137,21 @@ describe("a failed run's lines, from cli-output 3.4 revision 23", () => {
     ]);
   });
 
-  it("has a model that isn't there yet", () => {
-    expect(
-      lines(
-        { reason: "model-missing", provider: "Ollama", model: "llama3.2", alias: "fast" },
-        "Classify",
-      ),
-    ).toEqual([
+  it("has a model that isn't there yet, with ollama pull only for Ollama (revision 25)", () => {
+    const missing: RunFailure = {
+      reason: "model-missing",
+      provider: "Ollama",
+      model: "llama3.2",
+      alias: "fast",
+      server: "ollama",
+    };
+    expect(lines(missing, "Classify")).toEqual([
       "Support reply failed in the step Classify: Ollama is answering, but it doesn't have llama3.2 yet.",
       "Run ollama pull llama3.2, or point the model alias fast at another model in models.yaml.",
+    ]);
+    expect(lines({ ...missing, provider: "LM Studio", server: "other" }, "Classify")).toEqual([
+      "Support reply failed in the step Classify: LM Studio is answering, but it doesn't have llama3.2 yet.",
+      "Download llama3.2 in LM Studio, or point the model alias fast at another model in models.yaml.",
     ]);
   });
 
@@ -157,6 +169,18 @@ describe("a failed run's lines, from cli-output 3.4 revision 23", () => {
     expect(lines({ ...failure, emptyCallsTo: "search_docs" }, "Classify")[0]).toBe(
       "Support reply failed in the step Classify: Sorter used all 6 turns without finishing. Its last turns were calls to search_docs that returned nothing.",
     );
+    expect(lines({ ...failure, turns: 1 }, "Classify")[0]).toBe(
+      "Support reply failed in the step Classify: Sorter used its only turn without finishing.",
+    );
+  });
+
+  it("points the alias at another model when its model can't use tools (HAL-2745)", () => {
+    expect(
+      lines({ reason: "model-no-tools", model: "llama3.2", alias: "fast" }, "Classify"),
+    ).toEqual([
+      "Support reply failed in the step Classify: llama3.2, used by the model alias fast, can't use tools, and this step offers tools.",
+      "In models.yaml, point the model alias fast at a model that can use tools.",
+    ]);
   });
 
   it("keeps the fail-closed promise for a local-only workspace and a blocked site", () => {
@@ -190,6 +214,18 @@ describe("a failed run's lines, from cli-output 3.4 revision 23", () => {
       "Support reply failed in the step Draft reply. Halonic can't tell the cause yet.",
       report,
     ]);
+    expect(lines({ reason: "error", message: "  " })[0]).toBe(
+      "Support reply failed in the step Draft reply. Halonic can't tell the cause yet.",
+    );
+    expect(lines({ reason: "error", message: "The template has no body" })[0]).toBe(
+      "Support reply failed in the step Draft reply. Halonic can't tell the cause yet: The template has no body.",
+    );
+    expect(lines({ reason: "error", message: "Is the template empty?" })[0]).toBe(
+      "Support reply failed in the step Draft reply. Halonic can't tell the cause yet: Is the template empty?",
+    );
+    expect(lines({ reason: "error", message: "The template is empty!" })[0]).toBe(
+      "Support reply failed in the step Draft reply. Halonic can't tell the cause yet: The template is empty!",
+    );
     expect(lines({ reason: "internal" })).toEqual([
       "Support reply failed in the step Draft reply. Halonic can't tell the cause yet.",
       report,
@@ -217,6 +253,40 @@ describe("money", () => {
       "€5.00",
       "€5.08",
       "€0.00",
+    ]);
+  });
+
+  it("says under €0.001 rather than €0.000 for a tiny spend (revision 25)", () => {
+    expect([money(0.0004), money(0.00001), money(0.0005), money(0.001)]).toEqual([
+      "under €0.001",
+      "under €0.001",
+      "€0.001",
+      "€0.001",
+    ]);
+  });
+
+  it("throws for an amount no spend or budget can have", () => {
+    for (const amount of [-0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => money(amount)).toThrow(RangeError);
+    }
+  });
+});
+
+describe("counts in words", () => {
+  it("says once, twice, then digits", () => {
+    expect([timesInWords(1), timesInWords(2), timesInWords(3), timesInWords(12)]).toEqual([
+      "once",
+      "twice",
+      "3 times",
+      "12 times",
+    ]);
+  });
+
+  it("reads an empty list as nothing, so a sentence has no gap", () => {
+    expect([listInWords([]), listInWords(["Read mail"]), listInWords(["a", "b", "c"])]).toEqual([
+      "nothing",
+      "Read mail",
+      "a, b and c",
     ]);
   });
 });

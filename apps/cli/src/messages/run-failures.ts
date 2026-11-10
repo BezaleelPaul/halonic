@@ -1,4 +1,5 @@
 import { secretVariableName } from "@halonicjs/adapter-env-secrets";
+import { counted, timesInWords } from "./counts.ts";
 import { defineMessages, type Message } from "./define.ts";
 import { errorMessages } from "./general.ts";
 import { money } from "./money.ts";
@@ -27,9 +28,15 @@ interface KeyFacts {
 /**
  * Why a run failed, by microcopy 15.3's reasons, with the names each
  * reason's two lines need. Only the reasons whose terminal words are settled
- * are here: the newer ones of HAL-2264 (sandbox-start-failed,
- * harness-start-failed, model-out-of-memory, disk-full, interrupted) wait for
- * the board, and the sandbox reasons are `sandboxMessages`.
+ * are here. The engine's other reasons (`RunFailureReason`) are elsewhere or
+ * still wait for words:
+ *
+ * - the newer ones of HAL-2264 (sandbox-start-failed, harness-start-failed,
+ *   model-out-of-memory, disk-full, interrupted) wait for the board;
+ * - the sandbox reasons are `sandboxMessages`;
+ * - `cancelled` isn't a failure: Ctrl C or SIGTERM prints "Stopped. The run …
+ *   was cancelled after the step …" (cli-output 1.5), and `runs show` says
+ *   `runsMessages.showCancelled` for a run cancelled somewhere else.
  */
 export type RunFailure =
   | ({ readonly reason: "key-refused" } & KeyFacts)
@@ -56,6 +63,8 @@ export type RunFailure =
       readonly provider: string;
       readonly model: string;
       readonly alias: string;
+      /** Only Ollama has a command that downloads a model; another local server, such as LM Studio, downloads it in its own window. */
+      readonly server: "ollama" | "other";
     }
   | {
       readonly reason: "model-timeout";
@@ -102,6 +111,12 @@ export type RunFailure =
       readonly alias: string;
     }
   | { readonly reason: "site-blocked"; readonly agent: string; readonly site: string }
+  | {
+      readonly reason: "model-no-tools";
+      /** The model the alias points at, such as "llama3.2". */
+      readonly model: string;
+      readonly alias: string;
+    }
   | { readonly reason: "error"; readonly message?: string }
   | { readonly reason: "internal" };
 
@@ -141,7 +156,7 @@ const lineOne = {
   "provider-busy": (run, failure) =>
     failedIn(
       run,
-      phrase`${failure.provider} was busy and asked Halonic to slow down. Halonic tried ${failure.tries} times over ${failure.over}, then stopped.`,
+      phrase`${failure.provider} was busy and asked Halonic to slow down. Halonic tried ${timesInWords(failure.tries)} over ${failure.over}, then stopped.`,
     ),
   "model-unreachable": (run, failure) =>
     failedIn(
@@ -167,7 +182,11 @@ const lineOne = {
         : phrase`this month's estimated spend reached its budget of ${money(failure.budget)}.`
     }`,
   "turn-limit": (run, failure) => {
-    const usedUp = phrase`${failure.agent} used all ${failure.turns} turns without finishing.`;
+    // "used all 1 turn" reads like a bug (HAL-2745).
+    const usedUp =
+      failure.turns === 1
+        ? phrase`${failure.agent} used its only turn without finishing.`
+        : phrase`${failure.agent} used all ${counted(failure.turns, "turn", "turns")} without finishing.`;
     // The second sentence only when the run log has the last calls, as in Studio's banner.
     return failedIn(
       run,
@@ -191,10 +210,18 @@ const lineOne = {
       run,
       phrase`the sandbox stopped ${failure.agent} from reaching ${failure.site}, which isn't in its allowed sites. Nothing reached that site.`,
     ),
-  error: (run, failure) =>
-    failure.message === undefined
+  "model-no-tools": (run, failure) =>
+    failedIn(
+      run,
+      phrase`${failure.model}, used by the model alias ${failure.alias}, can't use tools, and this step offers tools.`,
+    ),
+  error: (run, failure) => {
+    // An empty message says no more than none at all.
+    const message = failure.message?.trim() ?? "";
+    return message === ""
       ? cantTellCause(run)
-      : phrase`${cantTellCause(run, ":")} ${withoutFullStop(failure.message)}.`,
+      : phrase`${cantTellCause(run, ":")} ${asSentence(message)}`;
+  },
   // A bug's own text never shows without --debug (cli-output 1.3 rule 5).
   internal: (run) => cantTellCause(run),
 } satisfies ByReason;
@@ -215,7 +242,11 @@ const lineTwo = {
       ? phrase`Start ${failure.provider}, then run again.`
       : phrase`Check your internet connection, then run again.`,
   "model-missing": (_run, failure) =>
-    phrase`Run ollama pull ${failure.model}, or point the model alias ${failure.alias} at another model in models.yaml.`,
+    phrase`${
+      failure.server === "ollama"
+        ? phrase`Run ollama pull ${failure.model}`
+        : phrase`Download ${failure.model} in ${failure.provider}`
+    }, or point the model alias ${failure.alias} at another model in models.yaml.`,
   "model-timeout": () => tryLater(),
   // A per-run budget doesn't reset, so only a monthly one can be waited out.
   budget: (_run, failure) =>
@@ -229,6 +260,9 @@ const lineTwo = {
     phrase`Point ${failure.agent}'s model alias ${failure.alias} at a local model in models.yaml.`,
   "site-blocked": (_run, failure) =>
     phrase`Add ${failure.site} to ${failure.agent}'s allowed sites, if ${failure.agent} should reach it.`,
+  // "In models.yaml" first, so it can't read as where the tools are.
+  "model-no-tools": (_run, failure) =>
+    phrase`In models.yaml, point the model alias ${failure.alias} at a model that can use tools.`,
   error: () => errorMessages.internalFix().phrase,
   internal: () => errorMessages.internalFix().phrase,
 } satisfies ByReason;
@@ -259,8 +293,9 @@ function cantTellCause(run: FailedRun, end: "." | ":" = "."): Phrase {
   return phrase`${run.title} failed in the step ${run.step}. Halonic can't tell the cause yet${end}`;
 }
 
-function withoutFullStop(text: string): string {
-  return text.endsWith(".") ? text.slice(0, -1) : text;
+/** The text as a sentence: it keeps its own ".", "?" or "!", and gets a full stop if it has none. */
+function asSentence(text: string): string {
+  return /[.?!]$/.test(text) ? text : `${text}.`;
 }
 
 /** Every key error names the secret and the variable Halonic reads it from, the same as the reader does. */
