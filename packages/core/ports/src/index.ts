@@ -48,10 +48,13 @@ export {
   checkWorkspacePath,
   type DefinitionSource,
   type DefinitionStore,
+  type DefinitionWatch,
+  type DefinitionWatchListener,
   definitionStoreVersion,
   type ExpectedContent,
   isPrivateWorkspacePath,
   segmentAsOpened,
+  type WorkspaceFileChange,
   type WriteOptions,
   type WriteResult,
 } from "./definition-store.ts";
