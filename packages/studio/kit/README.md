@@ -416,6 +416,7 @@ broke". It's centred in the space it replaces, in a 360px column (`max-w-empty`)
 <EmptyState plain title="No results for “sorter”" />;
 <EmptyState tone="error" title="Couldn't load agents" description={reason} action={retry} />;
 <EmptyState tone="error" align="start" title="Couldn't load recent runs" action={retry} />;
+<EmptyState tone="error" title="This page stopped working" action={reload} link={copyDetails} />;
 ```
 
 | Prop              | What it is                                                                        |
@@ -425,6 +426,7 @@ broke". It's centred in the space it replaces, in a 360px column (`max-w-empty`)
 | `icon`            | A 20px icon in `accent` on a 40px tile. Without one there's no tile               |
 | `action`          | The one primary button: `{ label, onClick, busy? }`. For an error, Try again      |
 | `secondaryAction` | An optional second way in, a secondary button. Not on an error                    |
+| `link`            | Only on a centred error: a quieter step after the button, as an inline link       |
 | `plain`           | No wash and no tile: no search results, and inside small panels                   |
 | `tone`            | `error`: the `danger` alert mark in place of the icon, and Try again as secondary |
 | `align`           | `start`, only for an error: one section of a page couldn't load                   |
@@ -1770,6 +1772,9 @@ passing anything. The CommandBox uses both.
 Without a `ClipboardProvider`, parts copy with `navigator.clipboard`, which needs a secure
 context, and fall back to the browser's copy command for a phone that reaches the computer over
 plain http. Without a `ToastStoreProvider`, a part has no toasts and says what happened itself.
+
+A part outside the kit that copies or toasts the same way reads them with `useWriteClipboard()`
+and `useToastStore()` (which is `null` without a provider), such as the shell's Copy details.
 
 A Dialog also gives the parts inside it its own polite region, because toasts wait while a
 dialog is open: a part says "Copied" there instead.
