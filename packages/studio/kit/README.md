@@ -586,8 +586,8 @@ unmount it to close it; focus starts on the title and goes back to the opener.
 ```
 
 - The options are **native radios** in one radio group (`appearance: none`), so screen readers
-  hear a radio group. A row is padded 8px 16px, 56px with a description, 48px without; the picked
-  option has a 20px `accent` check at the right.
+  hear a radio group. A row is padded 8px 16px, 56px with a description, 48px without, with a
+  1px line under it (the last row too); the picked option has a 20px `accent` check at the right.
 - **A tap, Enter or Space picks**: `onPick` once, and the screen saves (as on desktop) and unmounts
   the sheet. **The arrow keys only move the check.** Browsers fire `click` on the radio an arrow
   moves to, so a click in the same task as an arrow key isn't a pick.
@@ -1103,7 +1103,8 @@ control.
 - **On a phone** the text isn't typed in the page (component specs 3). The field is a button
   drawn as the phone Input: the text folded after 8 lines and a 20px chevron. Its name is the
   Field's label and its text is its description. With a Field error the edge is `danger`, so an
-  empty required field shows on the page, not only in the sheet.
+  empty required field shows on the page, not only in the sheet. The error is read as part of the
+  button's description; the button isn't `aria-invalid`, which a button doesn't support.
 - Pressing it opens the **text sheet**. The sheet has the label as its title and **Done** at the
   right, with no Close, because it cancels nothing. Then come the Field's hint, its error, and
   one borderless textarea that fills the screen down to the keyboard. It saves as you type
@@ -1460,12 +1461,14 @@ There's no read-only Select: a native select has none, and a view-only page show
 text. A list with icons, descriptions or search is a different component, not a Select.
 
 **On a phone** (the `phone` presentation) the Select is a **picker button** instead, never the
-browser's menu: 48px high with 16px text and the chevron, like the phone Input. It's named by the
+browser's menu: 48px high with 16px text and a 20px chevron, like the phone Input and the folded
+LongText. It's named by the
 Field's label and then the value, so a screen reader hears "Model, Sonnet", and the label points at
-it. Only that one control is rendered for the keyboard and screen readers. Until the kit's picker
-sheet exists (it comes with the Sheet), the button opens the system's picker from a native select
-hidden under it; a picked value is saved at once and focus goes back to the button. With the
-sheet, the button will open it instead, and say so with `aria-haspopup="dialog"`.
+it. It's the only control rendered; with a `name`, a hidden input carries the value for a form that
+posts, except while the Select is unavailable, as a disabled select isn't posted. The button opens the **PickerSheet** titled with the label (`aria-haspopup="dialog"`). A pick
+is saved at once and closes it, Close keeps the value, and either way focus goes back to the button.
+A `disabled` option is listed and can't be picked. A Field error shows as the `danger` edge and
+reaches screen readers through the button's description, since a button can't be `aria-invalid`.
 
 ## CopyButton
 

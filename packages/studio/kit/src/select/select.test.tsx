@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 import { verifies } from "@halonicjs/testing-spec";
 import { act, type ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Field } from "../field/field.tsx";
 import { PresentationProvider } from "../presentation/presentation.tsx";
+import { buttonNamed, dialogOf, fakeDialogPage, restoreDialogPage } from "../test/dialogs.tsx";
 import { click, render, unmountAll } from "../test/render.tsx";
 import { Select, type SelectOption } from "./select.tsx";
 
+beforeEach(() => {
+  fakeDialogPage();
+});
+
 afterEach(() => {
   unmountAll();
+  restoreDialogPage();
   vi.restoreAllMocks();
 });
 
@@ -39,6 +45,17 @@ function nameOf(element: Element): string {
   return ids.map((id) => document.getElementById(id)?.textContent?.trim()).join(", ");
 }
 
+/** The picker sheet's radio for an option, found by its words. */
+function radioNamed(sheet: HTMLElement, name: string): HTMLInputElement {
+  const radio = [...sheet.querySelectorAll<HTMLInputElement>('input[type="radio"]')].find(
+    (candidate) => nameOf(candidate) === name,
+  );
+  if (radio === undefined) {
+    throw new Error(`No radio named ${name}`);
+  }
+  return radio;
+}
+
 function onPhone(select: ReactNode) {
   return render(<PresentationProvider presentation="phone">{select}</PresentationProvider>);
 }
@@ -60,6 +77,7 @@ verifies("kit.select", () => {
     expect(chevron.getAttribute("aria-hidden")).toBe("true");
     expect(chevron.className).toContain("text-fg-muted");
     expect(chevron.className).toContain("pointer-events-none");
+    expect(chevron.className).toContain("size-icon-sm");
   });
 
   it("calls onChange with the value the user picks", () => {
@@ -188,7 +206,7 @@ verifies("kit.select", () => {
     );
     const button = container.querySelector("button") as HTMLButtonElement;
     expect(button.type).toBe("button");
-    expect(button.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(button.getAttribute("aria-haspopup")).toBe("dialog");
     expect(nameOf(button)).toBe("Model, Sonnet");
     const label = container.querySelector("label") as HTMLLabelElement;
     expect(label.htmlFor).toBe(button.id);
@@ -196,19 +214,32 @@ verifies("kit.select", () => {
     expect(line?.textContent).toBe("Used by new agents");
     expect(boxOf(button)).toContain("phone:min-h-touch");
     expect(button.className).toContain("phone:text-input-touch");
+    // 20px, like the folded LongText's chevron.
+    const chevron = button.parentElement?.querySelector('[aria-hidden="true"]') as HTMLElement;
+    expect(chevron.className).toContain("size-icon-md");
   });
 
-  it("renders only the button for screen readers and the keyboard on a phone", () => {
+  it("renders only the button on a phone, with a hidden input for a form that posts", () => {
     const { container } = onPhone(
       <Field label="Model">
-        <Select options={models} value="sonnet" onChange={ignore} />
+        <Select name="model" options={models} value="sonnet" onChange={ignore} />
       </Field>,
     );
-    const picker = container.querySelector("select") as HTMLSelectElement;
-    expect(picker.getAttribute("aria-hidden")).toBe("true");
-    expect(picker.tabIndex).toBe(-1);
-    expect(picker.id).toBe("");
-    expect(picker.className).toContain("pointer-events-none");
+    expect(container.querySelector("select")).toBeNull();
+    const posted = container.querySelector('input[type="hidden"]') as HTMLInputElement;
+    expect(posted.name).toBe("model");
+    expect(posted.value).toBe("sonnet");
+  });
+
+  it("doesn't post its hidden input while unavailable on a phone, like a disabled select", () => {
+    const { container } = onPhone(
+      <Field label="Model">
+        <Select name="model" options={models} value="sonnet" disabled onChange={ignore} />
+      </Field>,
+    );
+    expect((container.querySelector('input[type="hidden"]') as HTMLInputElement).disabled).toBe(
+      true,
+    );
   });
 
   it("is named by its aria-label and the value outside a Field on a phone", () => {
@@ -218,12 +249,7 @@ verifies("kit.select", () => {
     expect(nameOf(container.querySelector("button") as HTMLButtonElement)).toBe("Model, Haiku");
   });
 
-  it("opens the system picker from the button on a phone, and saves what the user picks", async () => {
-    const showPicker = vi.fn();
-    Object.defineProperty(HTMLSelectElement.prototype, "showPicker", {
-      value: showPicker,
-      configurable: true,
-    });
+  it("opens the picker sheet titled with the label on a phone, and saves what the user picks", async () => {
     const onChange = vi.fn();
     const { container } = onPhone(
       <Field label="Model">
@@ -231,27 +257,43 @@ verifies("kit.select", () => {
       </Field>,
     );
     const button = container.querySelector("button") as HTMLButtonElement;
+    button.focus();
     await click(button);
-    expect(showPicker).toHaveBeenCalledTimes(1);
-    choose(container.querySelector("select") as HTMLSelectElement, "haiku");
-    expect(onChange).toHaveBeenCalledWith("haiku");
+    const sheet = dialogOf(container);
+    expect(sheet.querySelector("h2")?.textContent).toBe("Model");
+    expect(radioNamed(sheet, "Sonnet").checked).toBe(true);
+    await click(radioNamed(sheet, "Haiku"));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("haiku");
+    expect(container.querySelector("dialog")).toBeNull();
     expect(document.activeElement).toBe(button);
-    Reflect.deleteProperty(HTMLSelectElement.prototype, "showPicker");
   });
 
-  it("focuses the system picker where a select has no showPicker", async () => {
-    Object.defineProperty(HTMLSelectElement.prototype, "showPicker", {
-      value: () => {
-        throw new DOMException("Not supported", "NotSupportedError");
-      },
-      configurable: true,
-    });
+  it("keeps the value when the sheet's Close is pressed, and focus goes back to the button", async () => {
+    const onChange = vi.fn();
     const { container } = onPhone(
-      <Select aria-label="Model" options={models} value="sonnet" onChange={ignore} />,
+      <Select aria-label="Model" options={models} value="sonnet" onChange={onChange} />,
+    );
+    const button = container.querySelector("button") as HTMLButtonElement;
+    button.focus();
+    await click(button);
+    expect(dialogOf(container).querySelector("h2")?.textContent).toBe("Model");
+    await click(buttonNamed(dialogOf(container), "Close"));
+    expect(container.querySelector("dialog")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it("lists an unavailable option in the sheet without a second line, and it can't be picked", async () => {
+    const onChange = vi.fn();
+    const { container } = onPhone(
+      <Select aria-label="Model" options={models} value="sonnet" onChange={onChange} />,
     );
     await click(container.querySelector("button") as HTMLButtonElement);
-    expect(document.activeElement).toBe(container.querySelector("select"));
-    Reflect.deleteProperty(HTMLSelectElement.prototype, "showPicker");
+    const opus = radioNamed(dialogOf(container), "Opus");
+    expect(opus.disabled).toBe(true);
+    expect(opus.hasAttribute("aria-describedby")).toBe(false);
+    await click(opus);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("shows the placeholder and the error on the phone button", () => {
@@ -263,7 +305,10 @@ verifies("kit.select", () => {
     const button = container.querySelector("button") as HTMLButtonElement;
     expect(nameOf(button)).toBe("Model, Choose a model");
     expect(button.querySelector("span")?.className).toContain("text-fg-subtle");
-    expect(button.getAttribute("aria-invalid")).toBe("true");
+    // A button can't be aria-invalid; the error reaches screen readers as its description.
+    expect(button.hasAttribute("aria-invalid")).toBe(false);
+    const line = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(line?.textContent).toContain("smart no longer exists.");
     expect(boxOf(button)).toContain("border-danger");
   });
 
@@ -272,6 +317,5 @@ verifies("kit.select", () => {
       <Select aria-label="Model" options={models} value="sonnet" onChange={ignore} disabled />,
     );
     expect((container.querySelector("button") as HTMLButtonElement).disabled).toBe(true);
-    expect((container.querySelector("select") as HTMLSelectElement).disabled).toBe(true);
   });
 });
