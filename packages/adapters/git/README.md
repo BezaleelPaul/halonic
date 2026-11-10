@@ -7,20 +7,20 @@ The `Vcs` port on the real `git` program, for one workspace folder. git always r
 - **Runtime:** node
 - **Public API:** `@halonicjs/adapter-git`
 
-The hardened runner and the repository checks are in; the `Vcs` itself follows (HAL-2607).
-
 ## Example
 
 ```ts
-import { GitRunner } from "@halonicjs/adapter-git";
+import { GitRunner, GitVcs } from "@halonicjs/adapter-git";
 
 const runner = await GitRunner.create();
-const result = await runner.run({
-  cwd: "/srv/workspaces/acme",
-  args: ["status", "--porcelain=v2"],
+const vcs = new GitVcs("/srv/workspaces/acme", {
+  runner,
+  author: { name: "Acme Studio", email: "studio@acme.example" },
 });
-console.log(result.code, result.stdout.toString());
+console.log(await vcs.status());
 ```
+
+git reads no user config, so the caller gives the commit author.
 
 ## How git is hardened
 
@@ -32,11 +32,16 @@ console.log(result.code, result.stdout.toString());
 - runs only in an absolute folder and never looks for a repository above it (`GIT_CEILING_DIRECTORIES`, which git ignores when relative), and finds programs only in the absolute folders of the `PATH`;
 - stops git, and every program it started, past its time or output limit.
 
-Before each call in a repository, the adapter checks that the folder is the repository's root, with all of its git files and alternate objects inside the folder. It then lists the repository's config, blanks the filters it and its nested repositories define, sends merge drivers to a conflict and ssh and signing programs back to git's defaults, and gives `diff`, `log`, `show` and `whatchanged` `--no-ext-diff --no-textconv`. It refuses a repository whose own config sets `branch.<name>.mergeOptions`, `include.path` or `includeIf.<condition>.path`.
+Before each call in a repository, the adapter checks that the folder is the repository's root, with all of its git files and alternate objects inside the folder. It then lists the repository's config, blanks the filters it and its nested repositories define, sends merge drivers to a conflict and ssh and signing programs back to git's defaults, and gives `diff`, `log`, `show` and `whatchanged` `--no-ext-diff --no-textconv`. It refuses a repository whose own config sets `branch.<name>.mergeOptions`, `include.path` or `includeIf.<condition>.path`. `pull` and `push` name `git-upload-pack` and `git-receive-pack` themselves, which beats `remote.<name>.uploadpack` and `remote.<name>.receivepack`.
+
+## Versions
+
+A version is a full commit id (port v2). `snapshot` commits the public files on disk through a copy of the index in `.git`, so the person's branch, index and working tree don't change and the commit is on no branch; `.env` and the other private entries stay out even when `.gitignore` lets them in. `readAt` and `listAt` read a commit's regular files with `ls-tree` and `cat-file blob`, never the working tree, and run no filter. `rename` uses `git mv` for what the repository tracks, so the history follows the file.
 
 The desktop's `git-guard` crate does the same in Rust.
 
 ## Not yet
 
-- **The repository's own config, through `GitRunner` alone.** The runner on its own doesn't stop programs the repository's config or `.gitattributes` names, such as a filter or an external diff; only the repository checks do. The `Vcs`, which comes next, runs every call through them. Until then, don't run `GitRunner` directly on a workspace you don't trust.
-- **Process allow-list.** `src/node/run-process.ts` is the only file that starts a process. It needs an entry in `tooling/check/process-starters.json` once HAL-188's check lands, with `src/skill-scripts.test.ts` as its `scriptsTest`.
+- **Pushing to a remote that needs a password.** No credential helper runs, the user's included. Halonic's own helper comes with the keychain work.
+- **The repository's own config, through `GitRunner` alone.** The runner on its own doesn't stop programs the repository's config or `.gitattributes` names, such as a filter or an external diff; only the repository checks do, and `GitVcs` runs every call through them. On a workspace you don't trust, use `GitVcs`, not `GitRunner` directly.
+- **Worktrees and patches.** The rest of port v2 (`addWorktree`, `diffBetween`, `applyPatch` and the others in the ADR) comes when the port adds them.
