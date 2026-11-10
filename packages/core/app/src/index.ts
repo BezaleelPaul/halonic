@@ -126,7 +126,12 @@ export {
   writtenDigest,
 } from "./listed-tool-fingerprint.ts";
 export { UntrustedText } from "./listed-tool-rules.ts";
-export { type OpenWorkspaceOptions, openWorkspace, workspaceFilesKey } from "./open-workspace.ts";
+export {
+  type OpenWorkspaceOptions,
+  openWorkspace,
+  reviewServiceKey,
+  workspaceFilesKey,
+} from "./open-workspace.ts";
 export {
   checkOutsideRunCall,
   type OutsideRunCall,
@@ -155,6 +160,19 @@ export {
   type ResourceReportOptions,
   type Resources,
 } from "./resource-report.ts";
+export type { ReviewCard, ReviewRecord } from "./review-record.ts";
+export type { DroppedReviewRecord } from "./review-records.ts";
+export { ReviewService, type ReviewServiceOptions } from "./review-service.ts";
+export type {
+  ItemToReview,
+  ProposedWrite,
+  ProposeOutcome,
+  ReviewCheck,
+  ReviewedFile,
+  ReviewOutcome,
+  ReviewStep,
+  ReviewTarget,
+} from "./review-types.ts";
 export { lastRunKey, lastTickKey, queueKey, routineRunId } from "./routine-ids.ts";
 export type { RoutineOverlap } from "./routine-overlap.ts";
 export type { QueuedTimes } from "./routine-queue.ts";
