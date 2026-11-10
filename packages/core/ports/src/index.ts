@@ -203,6 +203,7 @@ export {
 } from "./scheduler.ts";
 export {
   describeSecretName,
+  isQuotableSecretName,
   isSecretName,
   maxSecretNameLength,
   type Secrets,
