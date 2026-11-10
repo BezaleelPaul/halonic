@@ -29,9 +29,16 @@ function sameJson(a: unknown, b: unknown): boolean {
  *
  * A change is breaking when it removes a property or an `enum` value, makes
  * a key newly required, changes a `const`, narrows a `type`, removes an
- * `anyOf`/`oneOf` alternative or adds an `allOf` one. Widening is not: a
- * dropped `type` key, a `type` that gains a type, a new `anyOf`/`oneOf`
- * alternative.
+ * `anyOf`/`oneOf` alternative that no current one covers, adds an `allOf`
+ * part or adds a `type`, an `allOf`, an `anyOf` or a `oneOf` to a schema
+ * that had none. Widening is not: a dropped
+ * `type` key, a `type` that gains a type, a new `anyOf`/`oneOf` alternative,
+ * reordered alternatives. Known gaps: only the keywords above are compared
+ * (not, for example, `pattern` or `minimum`), and alternatives are matched
+ * one at a time, so several released ones merged into one current one are
+ * still reported. The added-`type` check also fires when an existing `enum` or
+ * `const` already implies that type. Removing a whole `anyOf` or `oneOf` is
+ * reported although it widens what is accepted.
  */
 export function breakingChanges(released: Schema, current: Schema, path = "$"): string[] {
   const changes: string[] = [];
@@ -43,6 +50,11 @@ export function breakingChanges(released: Schema, current: Schema, path = "$"): 
   if ("const" in released && !sameJson(released["const"], current["const"])) {
     changes.push(
       `${path}: "const" changed from ${JSON.stringify(released["const"])} to ${JSON.stringify(current["const"])}.`,
+    );
+  }
+  if (!("type" in released) && "type" in current) {
+    changes.push(
+      `${path}: a "type" of ${JSON.stringify(current["type"])} was added, which narrows what is accepted.`,
     );
   }
   const values = listOf(current["enum"]);
@@ -83,7 +95,8 @@ function breakingChangesBelow(released: Schema, current: Schema, path: string): 
       ...breakingChanges(released["items"], schemasOf(current["items"]), `${path}.items`),
     );
   }
-  for (const group of ["anyOf", "oneOf", "allOf"]) {
+  changes.push(...breakingChangesInAllOf(released, current, path));
+  for (const group of ["anyOf", "oneOf"]) {
     changes.push(...breakingChangesInAlternatives(released, current, path, group));
   }
   return changes;
@@ -117,9 +130,37 @@ function breakingChangesInGroup(
 }
 
 /**
- * The changes in a list of alternatives, which are compared by position.
- * More `anyOf`/`oneOf` alternatives accept more files, so a longer list is
- * not breaking, a shorter one is. For `allOf` it is the other way round.
+ * The changes in `allOf`, whose sub-schemas all apply and are compared by
+ * position. More parts accept fewer files, so a longer list is breaking and a
+ * shorter one is not.
+ */
+function breakingChangesInAllOf(released: Schema, current: Schema, path: string): string[] {
+  const before = listOf(released["allOf"]);
+  const after = listOf(current["allOf"]);
+  const changes: string[] = [];
+  if (before.length === 0 && after.length > 0) {
+    changes.push(
+      `${path}: "allOf" with ${after.length} ${after.length === 1 ? "part" : "parts"} was added, which narrows what is accepted.`,
+    );
+  } else if (after.length > before.length) {
+    changes.push(
+      `${path}: the number of "allOf" parts changed from ${before.length} to ${after.length}.`,
+    );
+  }
+  before.slice(0, after.length).forEach((part, index) => {
+    changes.push(
+      ...breakingChanges(schemasOf(part), schemasOf(after[index]), `${path}.allOf[${index}]`),
+    );
+  });
+  return changes;
+}
+
+/**
+ * The changes in a list of alternatives (`anyOf` or `oneOf`), compared by
+ * content: a released alternative is kept when some current one accepts all it
+ * accepted. A lost one is named by its released position, with the changes to
+ * its closest current alternative; fewer alternatives than before is reported
+ * as a count instead.
  */
 function breakingChangesInAlternatives(
   released: Schema,
@@ -129,24 +170,25 @@ function breakingChangesInAlternatives(
 ): string[] {
   const before = listOf(released[group]);
   const after = listOf(current[group]);
-  if (before.length === 0) {
-    return [];
+  if (before.length === 0 && after.length > 0) {
+    return [
+      `${path}: "${group}" with ${after.length} ${after.length === 1 ? "alternative" : "alternatives"} was added, which narrows what is accepted.`,
+    ];
   }
-  const changes: string[] = [];
-  const narrowed = group === "allOf" ? after.length > before.length : after.length < before.length;
-  if (narrowed) {
-    changes.push(
+  if (after.length < before.length) {
+    return [
       `${path}: the number of "${group}" alternatives changed from ${before.length} to ${after.length}.`,
-    );
+    ];
   }
-  before.slice(0, after.length).forEach((alternative, index) => {
-    changes.push(
-      ...breakingChanges(
-        schemasOf(alternative),
-        schemasOf(after[index]),
-        `${path}.${group}[${index}]`,
-      ),
+  return before.flatMap((alternative, index) => {
+    const options = after.map((candidate) =>
+      breakingChanges(schemasOf(alternative), schemasOf(candidate), `${path}.${group}[${index}]`),
+    );
+    if (options.some((changes) => changes.length === 0)) {
+      return [];
+    }
+    return options.reduce((closest, changes) =>
+      changes.length < closest.length ? changes : closest,
     );
   });
-  return changes;
 }
