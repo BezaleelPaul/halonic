@@ -32,6 +32,7 @@
    colours), the custom variants and the other utilities, and the safe areas live in their own
    files. They hold no tokens, only rules that read them. */
 @import "./theme-selection.css";
+@import "./theme-lines.css";
 @import "./checkbox/checkbox.css";
 @import "./switch/switch.css";
 @import "./theme-utilities.css";
