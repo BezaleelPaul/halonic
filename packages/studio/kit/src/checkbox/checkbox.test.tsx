@@ -117,6 +117,11 @@ verifies("kit.checkbox", () => {
     expect(box.className).toContain("opacity-45");
     expect(box.className).toContain("contrast-more:opacity-60");
     expect(box.className).toContain("border-fg-disabled");
+    expect(box.className).toContain("checked:border-fg-disabled");
+    expect(box.className).toContain("indeterminate:border-fg-disabled");
+    // The primary edge would win over the disabled one in the CSS, so the box must not carry it.
+    expect(box.className).not.toContain("checked:border-primary");
+    expect(box.className).not.toContain("indeterminate:border-primary");
     act(() => box.focus());
     expect(document.activeElement).toBe(box);
     await click(box);
