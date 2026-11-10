@@ -1,8 +1,9 @@
 import type { Mark } from "../output/paint.ts";
-import { listInWords } from "./counts.ts";
+import { countInWords, listInWords } from "./counts.ts";
 import { defineMessages } from "./define.ts";
 import { dim, markPart, phrase } from "./phrase.ts";
 import { runMessages } from "./run.ts";
+import { happenedInWords, type StartedAt } from "./runs-list.ts";
 import { suggestedCommand } from "./suggested-command.ts";
 
 /** Where a run was when someone cancelled it, for {@link runsMessages}' `showCancelled`. */
@@ -38,6 +39,13 @@ export type ShownEnd =
  */
 export const runsMessages = defineMessages("runs", {
   summary: () => phrase`List runs, show what one did, or answer one that's waiting for you`,
+  /**
+   * `show`'s line in `halonic runs --help`, from the words of {@link summary}
+   * (team wording on HAL-2742, as HAL-2282 allows).
+   */
+  showSummary: () => phrase`Show what one run did`,
+  /** What `runs show` was doing, for "✕ Couldn't show run 01JD8Q: there's no workspace.yaml here.". */
+  showAction: (runId: string) => phrase`show run ${runId}`,
   /** What `runs send` was doing, for "✕ Couldn't send approve to run 01JD8Q: …". */
   sendAction: (event: string, runId: string) => phrase`send ${event} to run ${runId}`,
   /** The same, when there's no such run: "✕ Couldn't send approve: …". */
@@ -100,16 +108,18 @@ export const runsMessages = defineMessages("runs", {
    * After the wait step's name, in place of a time, with a ! (cli-output 3.4,
    * revision 24). Only the exact events `approve` and `reject` get their own
    * verb; any other reads "you answered hold at 14:02", as written in the
-   * workflow, so Halonic never guesses what an event means.
+   * workflow, so Halonic never guesses what an event means. An answer from
+   * an earlier day says which: "you approved yesterday at 16:40".
    */
-  youAnswered: (event: string, time: string) => {
+  youAnswered: (event: string, at: StartedAt) => {
+    const when = happenedInWords(at);
     if (event === "approve") {
-      return phrase`you approved at ${time}`;
+      return phrase`you approved ${when}`;
     }
     if (event === "reject") {
-      return phrase`you rejected at ${time}`;
+      return phrase`you rejected ${when}`;
     }
-    return phrase`you answered ${event} at ${time}`;
+    return phrase`you answered ${event} ${when}`;
   },
   /** The same place, while the run is still waiting for the answer. */
   waitingSince: (time: string) => phrase`waiting for you since ${time}`,
@@ -141,6 +151,15 @@ export const runsMessages = defineMessages("runs", {
     }
     return phrase`${title} was cancelled before it started.`;
   },
+  /**
+   * `runs show` without a run id, or with more than one (usage, exit 2); the
+   * usage line is line 2. The shape of `init`'s "takes one folder name"
+   * (cli-output 1.3); team wording on HAL-2742, as HAL-2282 allows.
+   */
+  showTakesOneRunId: (given: readonly string[]) =>
+    given.length === 0
+      ? phrase`halonic runs show needs a run id.`
+      : phrase`halonic runs show takes one run id, and you gave ${countInWords(given.length)}: ${given.join(", ")}.`,
 });
 
 function notWaitingInWords(why: NotWaiting): string {
