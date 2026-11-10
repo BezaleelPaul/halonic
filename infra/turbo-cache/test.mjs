@@ -31,3 +31,31 @@ test("turbo-cache refuses with 503 when the switch is off or unreadable", async 
   );
   assert.equal((await call({})).status, 503);
 });
+
+test("turbo-cache: no token 401, read token cannot upload, write token can", async () => {
+  const store = new Map();
+  const env = {
+    SPEND_KV: kv({ spend_ok: "on", "spend_ok:turbo-cache": "on" }),
+    TURBO_TOKEN: { get: async () => "w" },
+    TURBO_TOKEN_READ: { get: async () => "r" },
+    R2_STORE: {
+      put: async (k, b) => store.set(k, b),
+      get: async (k) => (store.has(k) ? { size: 1, body: "x" } : null),
+      head: async (k) => (store.has(k) ? { size: 1, uploaded: new Date() } : null),
+    },
+  };
+  const req = (method, token, path = "/v8/artifacts/abcdef123456") =>
+    worker.fetch(
+      new Request(`https://x${path}`, {
+        method,
+        body: method === "PUT" ? "data" : undefined,
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      }),
+      env,
+    );
+  assert.equal((await req("GET", undefined)).status, 401);
+  assert.equal((await req("PUT", "r")).status, 403);
+  assert.equal((await req("PUT", "w")).status, 202);
+  assert.equal((await req("GET", "r")).status, 200);
+  assert.equal((await req("HEAD", "r")).status, 200);
+});

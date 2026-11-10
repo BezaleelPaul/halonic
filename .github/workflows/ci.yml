@@ -292,6 +292,11 @@ jobs:
     name: Typecheck, lint, test, build
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # The write token for the remote cache lives in the environment
+    # `turbo-cache-write`, which only `main` and the merge queue may use
+    # (deployment branch rule). A pull request gets the empty `turbo-cache-read`
+    # and the read-only token, whatever its ci.yml says.
+    environment: ${{ github.event_name == 'pull_request' && 'turbo-cache-read' || 'turbo-cache-write' }}
     permissions:
       contents: read
     env:
@@ -312,8 +317,26 @@ jobs:
           path: ${{ env.TURBO_CACHE_DIR }}
           key: turbo-${{ runner.os }}-${{ github.sha }}
           restore-keys: turbo-${{ runner.os }}-
+      # Remote cache (Cloudflare, infra/turbo-cache). Only main and the merge
+      # queue hold the write token; pull requests get a read-only one, so the
+      # cache can't be written from an unreviewed branch. Without the
+      # secrets (a fork), the step falls back to the local cache.
       - name: Run every task through the cache
-        run: pnpm exec turbo run typecheck lint test build --continue --output-logs=new-only --summarize
+        env:
+          TURBO_API: ${{ vars.TURBO_API }}
+          TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+          TURBO_TOKEN: ${{ github.event_name == 'pull_request' && secrets.TURBO_TOKEN_READ || secrets.TURBO_TOKEN }}
+          TURBO_REMOTE_CACHE_SIGNATURE_KEY: ${{ secrets.TURBO_REMOTE_CACHE_SIGNATURE_KEY }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$TURBO_TOKEN" ] || [ -z "$TURBO_REMOTE_CACHE_SIGNATURE_KEY" ]; then
+            cache=local:rw
+          elif [ "$EVENT" = "pull_request" ]; then
+            cache=local:rw,remote:r
+          else
+            cache=local:rw,remote:rw
+          fi
+          pnpm exec turbo run typecheck lint test build --continue --output-logs=new-only --summarize --cache="$cache"
       # On main and in the merge queue, the change checks itself: it reads
       # the result files the tests just wrote, even when a task failed (a
       # missing result file fails the check anyway). A queued change already

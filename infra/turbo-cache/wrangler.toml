@@ -1,4 +1,4 @@
-# Deployed through the Cloudflare connection. The deployed Worker must have both bindings below.
+# Deployed through the Cloudflare connection. The deployed Worker must have all the bindings below.
 name = "halonic-turbo-cache"
 main = "worker.mjs"
 compatibility_date = "2026-06-15"
@@ -7,11 +7,17 @@ compatibility_date = "2026-06-15"
 binding = "R2_STORE"
 bucket_name = "halonic-turbo-cache"
 
-# TURBO_TOKEN is an account-level Secrets Store secret, read with `await env.TURBO_TOKEN.get()`.
+# Write token (reads and uploads), only for main and the merge queue. Account-level Secrets Store secret, read with `await env.TURBO_TOKEN.get()`.
 [[secrets_store_secrets]]
 binding = "TURBO_TOKEN"
 store_id = "3a2182643c7a4eea82e266e47d982d70"
 secret_name = "TURBO_TOKEN"
+
+# Read-only token, for pull requests. It can read and query, never upload.
+[[secrets_store_secrets]]
+binding = "TURBO_TOKEN_READ"
+store_id = "3a2182643c7a4eea82e266e47d982d70"
+secret_name = "TURBO_TOKEN_READ"
 
 # The spend switch (see ../spend-guard/README.md). The live Worker had no SPEND_KV before this
 # change: deploy the new source and this binding together, or every request gets a 503.
