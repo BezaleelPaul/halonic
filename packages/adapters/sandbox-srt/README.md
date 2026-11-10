@@ -46,7 +46,8 @@ with `pnpm test:fence`.
 
 `new SrtSandbox(machine?, runner?, journalFolder?)` takes the real machine and runner by default.
 Give `journalFolder` (a folder only this user can write) to keep the snapshot `recoverGitFolders`
-needs; without it, nothing is kept and a crash is not recovered.
+needs; without it, nothing is kept and a crash is not recovered. On Windows the folder gets an
+access list for this user alone (`icacls`, no inheritance) each time it is prepared or recovered.
 
 ## Example
 
