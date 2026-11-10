@@ -124,6 +124,7 @@ export type { Studio } from "./studio.ts";
 export {
   currentLocation,
   homeLocation,
+  type OpenedTab,
   reopenableTabs,
   type TabLocation,
   TabSet,
