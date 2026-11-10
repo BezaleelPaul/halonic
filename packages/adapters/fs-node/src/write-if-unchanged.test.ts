@@ -80,9 +80,13 @@ verifies("fs-node.write-is-whole-or-nothing", () => {
 
     it("keeps the permissions of the file it replaces", async () => {
       const { root, store } = await folderWith({ "run.sh": "echo 1\n" });
-      await chmod(join(root, "run.sh"), 0o755);
+      const file = join(root, "run.sh");
+      await chmod(file, 0o755);
+      // Windows has no execute bit: its modes only say read-only or not, so the script reads 0o666.
+      const before = (await stat(file)).mode & 0o777;
+      expect(before).toBe(process.platform === "win32" ? 0o666 : 0o755);
       await store.write("run.sh", "echo 2\n");
-      expect((await stat(join(root, "run.sh"))).mode & 0o777).toBe(0o755);
+      expect((await stat(file)).mode & 0o777).toBe(before);
     });
 
     it("never lets a reader see half a file while it is rewritten", async () => {
