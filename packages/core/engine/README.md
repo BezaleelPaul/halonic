@@ -22,11 +22,18 @@ loop of one model turn, which the local chat turn runs.
 | `TurnLog`            | where a turn writes `llm.request`, `llm.response`, `llm.skipped`, `llm.fallback`, `tool.called` and `tool.result`            | `engine.turn-logs-events`                                                           |
 | `RunStoreTurnLog`    | a `TurnLog` that appends those events to a run's log in a `RunStore`                                                         | `engine.turn-logs-events`                                                           |
 | `HalonicTool`        | one of Halonic's own tools: its definition and how to run it                                                                 | `engine.turn-runs-tool-calls`                                                       |
+| `halonicSource`      | the source id `"halonic"` that refusals name for Halonic's tools; `callerSource` (`"caller"`) is the same for the caller's   | `engine.turn-refusals-as-data`                                                      |
+| `ModelTurnInput`     | what `runModelTurn` takes, and `ModelTurnResult`, which it returns: the answer, the turn's messages, refusals and skips      | `engine.local-chat-turn`                                                            |
+| `TurnEvent`          | one event a `TurnLog` takes (the `llm.*` and `tool.*` events above)                                                          | `engine.turn-logs-events`                                                           |
 | `RunState`           | what the kernel knows about a run: a fold of its events by `evolve` (or `foldRun`), stored as the run's snapshot             | `engine.run-state-fold`                                                             |
 | `DecideInput`        | the inputs that move a run on (`start`, `send`, `timer`, `effect-done`), each with its time; `decide` returns a `Decision`   | (types only)                                                                        |
 | `Effect`             | what `decide` asks `step` to do after appending: call a model or a tool, start a child run, tell the parent, set a timer     | (types only)                                                                        |
 | `decide`             | what a run does next for one input: pure, no clock and no new ids; refuses what the run can't take                           | `engine.decide-refusals`                                                            |
+| `InputRefused`       | what `decide` throws for an input the run can't take; its `code` (a `RefusalCode`) says why, and nothing is recorded         | `engine.decide-refusals`                                                            |
 | `step`               | moves a run on by one input: reads it, decides and appends once with `expectedSeq`, reading again after a lost race          | `engine.step-appends-once`                                                          |
+| `StepPorts`          | what `step` takes besides the run and the input: the run store and the blob store                                            | `engine.step-appends-once`                                                          |
+| `StepResult`         | what `step` returns: the events it appended and the effects to carry out                                                     | `engine.step-appends-once`                                                          |
+| `maxStepAttempts`    | how many times `step` tries after a lost race (10)                                                                           | `engine.step-appends-once`                                                          |
 | `readRun`            | reads a run from its snapshot and the events after it; a snapshot that doesn't fit is ignored and the log folded             | `engine.snapshot-is-cache`                                                          |
 | `keepDefinitions`    | keeps a run's definitions in the blob store (`readDefinitions` reads them back); a missing blob fails the run                | `engine.kept-definitions`                                                           |
 | `StateHandler`       | one state type's `enter` and `onInput`, found by `pnpm discover` in `src/states`                                             | `engine.state-registry`                                                             |
@@ -36,6 +43,9 @@ loop of one model turn, which the local chat turn runs.
 Three steps of the loop are named functions, so the HAL-803 rules plug in without reshaping it
 (HAL-998): `offerListedTools`, `checkCallBeforeRun` and `passResultToModel`, in `src/agent/`.
 For now they pass values through unchanged.
+
+`LocalExecutorOptions` is what a `LocalExecutor` is built from; `maxRounds` defaults to
+`defaultMaxRounds` (20).
 
 A chat turn belongs to no run, so `LocalExecutor.chatTurn` keeps no run log; it returns the
 turn's messages in `turn`, what it refused in `refusals` and the models it skipped in `skipped`.
@@ -49,11 +59,11 @@ When no model is left, the turn fails with a `ModelCallError` whose reason is th
 
 Each `llm.response` gets its `cost` from the model that answered: its tokens at its price per
 million, in the workspace's budget currency and not rounded. It uses `priceOf` from
-`@halonicjs/ports`, as the bridge does, so a call costs the same on either path. A local model without a price
-(Ollama, LM Studio, the mock model) costs 0. Any other model gets no `cost`, so the run's summary
-counts the call in `unpricedCalls`. A call the bridge passes on with the person's own sign-in gets `cost` 0 and
-`paidBy: "subscription"`, and the summary counts it in `subscriptionCalls`, never in `cost` or
-`unpricedCalls`.
+`@halonicjs/ports`, as the bridge does, so a call costs the same on either path. A local model
+without a price (Ollama, LM Studio, the mock model) costs 0. Any other model gets no `cost`, so the
+run's summary counts the call in `unpricedCalls`. A call the bridge passes on with the person's own
+sign-in gets `cost` 0 and `paidBy: "subscription"`, and the summary counts it in
+`subscriptionCalls`, never in `cost` or `unpricedCalls`.
 
 ## Kernel
 
@@ -77,9 +87,12 @@ it widens as each state lands, until it is the format's whole `StateType` union.
 a type not built yet fails with a clear error.
 
 On start, the engine calls `endInterruptedRuns` once: each run it lost when it stopped (status
-`running`) ends with `run.failed`, reason `interrupted`. Waiting runs stay as they are
-(requirement `engine.end-interrupted-runs`). It assumes one engine per run store, and waking a
-parent that waits on a run it ended is the run kernel's job (HAL-186).
+`running`) ends with `run.failed`, reason `interrupted`, the state the run was in, the time of the
+start and the text `interruptedError`. Waiting runs (for an event, a timer or a child run) stay as
+they are. Status and last event come from one read of the log; if the log moves on while the
+engine ends a run, something still writes to it, so the engine leaves it as it is. It returns the
+ids of the runs it ended (requirement `engine.end-interrupted-runs`). It assumes one engine per
+run store, and waking a parent that waits on a run it ended is the run kernel's job (HAL-186).
 
 ## Example
 
