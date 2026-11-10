@@ -6,6 +6,7 @@ import {
   OpenAiCompatibleProvider,
   type OpenAiCompatibleProviderOptions,
 } from "./openai-provider.ts";
+import { ReplyFormatError } from "./reply.ts";
 import { ScriptedVendor } from "./test/scripted-vendor.ts";
 
 /** A provider in front of a fresh scripted vendor. */
@@ -41,13 +42,13 @@ llmProviderContract(
     return {
       provider,
       answerNext: (answer) => vendor.answerNext(answer),
-      hangNext: () => vendor.hangNext(),
+      hangNext: (partialText) => vendor.hangNext(partialText),
       refuseNext: () => vendor.replyNext(400, { error: { message: "max_tokens is too large" } }),
       calls: () => vendor.calls(),
     };
   },
   // LM Studio and Ollama send the reasoning of thinking models, so the suite checks it.
-  { streams: false, reasoning: true },
+  { streams: true, reasoning: true },
 );
 
 verifies("model-openai.endpoint", () => {
@@ -317,5 +318,115 @@ verifies("model-openai.reply-size", () => {
       /^acme's answer for the model "acme-small" was over 10 MB, more than Halonic reads$/,
     );
     expect(cancelled).toBe(true);
+  });
+
+  it("fails a stream with refused on a body over 10 MiB with no line break, and stops reading it", async () => {
+    const { vendor, provider } = providerWith();
+    vendor.floodNext();
+    const error = await drain(provider.stream(chatRequest())).catch((thrown: unknown) => thrown);
+    expect(isModelCallError(error) && error.reason).toBe("refused");
+    expect((error as Error).message).toMatch(
+      /^acme's answer for the model "acme-small" was over 10 MB, more than Halonic reads$/,
+    );
+    expect(vendor.calls().open).toBe(0);
+  });
+
+  it("refuses a stream that declares a length over 10 MiB before reading it", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull: () => new Promise(() => {}),
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const huge = new Response(body, { headers: { "content-length": String(11 * 1024 * 1024) } });
+    const { provider } = providerWith({ http: { fetch: async () => huge } });
+    await expect(drain(provider.stream(chatRequest()))).rejects.toThrow(
+      /^acme's answer for the model "acme-small" was over 10 MB, more than Halonic reads$/,
+    );
+    expect(cancelled).toBe(true);
+  });
+});
+
+/** Reads `stream` to its end. */
+async function drain(stream: AsyncIterable<unknown>): Promise<void> {
+  for await (const _event of stream) {
+    // Only the end matters.
+  }
+}
+
+verifies("model-openai.call-errors", () => {
+  /** The error a stream ends with when the server answers with `body`. */
+  async function streamFailureOf(
+    body: ReadableStream<Uint8Array> | string,
+    key?: () => Promise<string>,
+  ): Promise<Error> {
+    const http = { fetch: async () => new Response(body) };
+    const provider = new OpenAiCompatibleProvider({
+      id: "acme",
+      type: "openai",
+      baseUrl: "http://acme.test/v1",
+      http,
+      ...(key === undefined ? {} : { key }),
+    });
+    try {
+      for await (const _event of provider.stream(chatRequest())) {
+        // Read to the end.
+      }
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("the stream ended without an error");
+  }
+
+  it("ends a stream with refused on a chunk it can't read", async () => {
+    const error = await streamFailureOf("data: not json\n\n");
+    expect(isModelCallError(error) && error.reason).toBe("refused");
+  });
+
+  it("ends a stream with offline when the connection drops mid-answer", async () => {
+    const dropped = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'),
+        );
+        controller.error(new TypeError("terminated"));
+      },
+    });
+    const error = await streamFailureOf(dropped);
+    expect(isModelCallError(error) && error.reason).toBe("offline");
+  });
+
+  it("ends a stream with refused, and the vendor's text as its cause, on an error event after a 200", async () => {
+    const error = await streamFailureOf(
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n' +
+        'data: {"error":{"message":"The server had an error while processing your request"}}\n\n',
+    );
+    expect(isModelCallError(error) && error.reason).toBe("refused");
+    expect(error.message).toBe('acme stopped the answer from the model "acme-small" with an error');
+    expect(vendorTextOf(error)).toBe("The server had an error while processing your request");
+  });
+
+  it("ends a stream with out-of-credit when its error event says the credit is used up", async () => {
+    const error = await streamFailureOf(
+      'data: {"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}\n\n',
+    );
+    expect(isModelCallError(error) && error.reason).toBe("out-of-credit");
+    expect(vendorTextOf(error)).toBe("You exceeded your current quota");
+  });
+
+  it("drops the text of an error event that holds the call's own key", async () => {
+    const event = 'data: {"error":{"message":"bad key proxy-0123"}}\n\n';
+    const error = await streamFailureOf(event, async () => "proxy-0123");
+    expect(isModelCallError(error) && error.reason).toBe("refused");
+    expect(vendorTextOf(error)).toBeUndefined();
+  });
+
+  it("ends a stream with refused, as chat() does, when the server sends no chunks", async () => {
+    // A server that ignores `stream: true` sends one whole reply; chat() can't read it either.
+    const error = await streamFailureOf('{"error":"not found"}');
+    expect(isModelCallError(error) && error.reason).toBe("refused");
+    expect(isModelCallError(error) && error.cause).toBeInstanceOf(ReplyFormatError);
+    expect(isModelCallError(await streamFailureOf(""))).toBe(true);
   });
 });
