@@ -33,29 +33,49 @@ type CardState =
   | { readonly kind: "answered"; readonly event: string; readonly at: Date };
 
 /**
- * An answer's button label: "Approve" and "Reject", else the event's name in words with a
- * capital first letter, `needs_info` as "Needs info".
+ * An answer's label, on its button and in the decided line alike: the step's own label when it
+ * has one, with hidden characters marked, else "Approve" and "Reject", else the event's name in
+ * words with a capital first letter, `needs_info` as "Needs info".
  */
-export function answerLabel(event: string): string {
+export function answerLabel(event: string, own?: string): string {
+  if (own !== undefined && own.trim() !== "") return markedName(own.trim());
   const words = event.replace(/[-_]+/g, " ").trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function busyLabel(event: string): string {
-  if (event === "approve") return "Approving…";
-  if (event === "reject") return "Rejecting…";
+/**
+ * The step's own label for an answer, or `undefined` without one. Events come from the user's
+ * workflow, so one named `constructor` must not find an `Object.prototype` member.
+ */
+function ownLabel(labels: Readonly<Record<string, string>>, event: string): string | undefined {
+  return Object.hasOwn(labels, event) ? labels[event] : undefined;
+}
+
+/**
+ * An answer's busy label: "Approving…" and "Rejecting…" only beside the built-in "Approve" and
+ * "Reject", else the neutral "Working…", so it never names the answer with another word.
+ */
+function busyLabel(event: string, own?: string): string {
+  if (answerLabel(event, own) === answerLabel(event)) {
+    if (event === "approve") return "Approving…";
+    if (event === "reject") return "Rejecting…";
+  }
   return "Working…";
 }
 
 /**
  * The decided Callout of a wait step (mc 5). Its reject is the step's own answer, so it says
- * nothing about a tool call or the agent; any other answer names the button you pressed.
+ * nothing about a tool call or the agent. Any other answer, and any answer the step labels
+ * itself, names the button you pressed with the same word (HAL-4008).
  */
-export function answeredText(event: string, at: Date): string {
+export function answeredText(event: string, at: Date, own?: string): string {
   const time = decidedAt(at);
-  if (event === "approve") return `Approved by you at ${time}. The run continues.`;
-  if (event === "reject") return `Rejected by you at ${time}.`;
-  return `You chose ${answerLabel(event)} at ${time}.`;
+  const label = answerLabel(event, own);
+  if (label === answerLabel(event)) {
+    if (event === "approve") return `Approved by you at ${time}. The run continues.`;
+    if (event === "reject") return `Rejected by you at ${time}.`;
+  }
+  return `You chose ${label} at ${time}.`;
 }
 
 /**
@@ -119,13 +139,19 @@ export function WaitCard(props: WaitCardProps) {
       </div>
       {state.kind === "answered" ? (
         <DecidedBar
-          text={answeredText(state.event, state.at)}
+          text={answeredText(state.event, state.at, ownLabel(item.answerLabels, state.event))}
           next={next}
           back={back}
           callout={answered}
         />
       ) : (
-        <AnswerBar accepts={item.accepts} state={state} guard={guard} onAnswer={answer} />
+        <AnswerBar
+          accepts={item.accepts}
+          labels={item.answerLabels}
+          state={state}
+          guard={guard}
+          onAnswer={answer}
+        />
       )}
     </section>
   );
@@ -133,6 +159,7 @@ export function WaitCard(props: WaitCardProps) {
 
 interface AnswerBarProps {
   readonly accepts: readonly string[];
+  readonly labels: Readonly<Record<string, string>>;
   readonly state: Exclude<CardState, { kind: "answered" }>;
   readonly guard: DecisionGuard;
   readonly onAnswer: (event: string) => void;
@@ -143,7 +170,7 @@ interface AnswerBarProps {
  * row under it, none red (flow-inbox 5.1, first-run 4.3). While one is sent it is busy and the
  * others ignore presses but keep focus.
  */
-function AnswerBar({ accepts, state, guard, onAnswer }: AnswerBarProps) {
+function AnswerBar({ accepts, labels, state, guard, onAnswer }: AnswerBarProps) {
   const [first, ...others] = accepts;
   const failed = state.kind === "open" ? state.failed : null;
   const answerButton = (event: string, primary: boolean) => (
@@ -152,10 +179,10 @@ function AnswerBar({ accepts, state, guard, onAnswer }: AnswerBarProps) {
       variant={primary ? "primary" : "secondary"}
       block
       busy={state.kind === "answering" && state.event === event}
-      busyLabel={busyLabel(event)}
+      busyLabel={busyLabel(event, ownLabel(labels, event))}
       onClick={() => onAnswer(event)}
     >
-      {answerLabel(event)}
+      {answerLabel(event, ownLabel(labels, event))}
     </Button>
   );
   return (

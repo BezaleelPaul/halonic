@@ -204,6 +204,55 @@ verifies("inbox.wait-card", () => {
       expect(open).toHaveBeenCalledOnce();
     });
 
+    it("uses the button's word in the decided line: the step's own label, else the built-in one", async () => {
+      const item: WaitItem = {
+        ...reviewItem({ accepts: ["approve", "needs_info", "escalate"] }),
+        answerLabels: { approve: "Send reply", escalate: "Ask a lead" },
+      };
+      const words = { approve: "Send reply", needs_info: "Needs info", escalate: "Ask a lead" };
+      for (const [event, word] of Object.entries(words)) {
+        unmountAll();
+        const { root, sent, later } = openCard({ item });
+        later(61);
+        await press(button(root, word));
+        expect(sent).toEqual([event]);
+        expect(root.querySelector("[role='group']")?.textContent).toContain(
+          `You chose ${word} at 10:44.`,
+        );
+      }
+    });
+
+    it("keeps the built-in lines for Approve and Reject when the step has no label", async () => {
+      const { root, later } = openCard({
+        item: { ...reviewItem(), answerLabels: { escalate: "Ask a lead" } },
+      });
+      later(61);
+      await press(button(root, "Approve"));
+      expect(root.textContent).toContain("Approved by you at 10:44. The run continues.");
+    });
+
+    it("says Working… while sending an answer the step labels itself, never another word", () => {
+      const { root } = openCard({
+        item: { ...reviewItem(), answerLabels: { approve: "Send reply" } },
+      });
+      const labels = [...root.querySelectorAll("button")].map((b) => b.textContent);
+      expect(labels).toEqual(["Open run", "Send replyWorking…", "RejectRejecting…"]);
+    });
+
+    it("takes an answer named like a built-in object key", async () => {
+      const item: WaitItem = {
+        ...reviewItem({ accepts: ["constructor", "toString"] }),
+        answerLabels: { toString: "Show text" },
+      };
+      const { root, sent, later } = openCard({ item });
+      const labels = [...root.querySelectorAll("button")].map((b) => b.textContent);
+      expect(labels).toEqual(["Open run", "ConstructorWorking…", "Show textWorking…"]);
+      later(61);
+      await press(button(root, "Constructor"));
+      expect(sent).toEqual(["constructor"]);
+      expect(root.textContent).toContain("You chose Constructor at 10:44.");
+    });
+
     it("opens the run", async () => {
       const onOpenRun = vi.fn();
       const { root } = openCard({ onOpenRun });
@@ -216,5 +265,10 @@ verifies("inbox.wait-card", () => {
     expect(answerLabel("approve")).toBe("Approve");
     expect(answerLabel("needs_info")).toBe("Needs info");
     expect(answerLabel("ask-again")).toBe("Ask again");
+    expect(answerLabel("escalate", "Ask a lead")).toBe("Ask a lead");
+    expect(answerLabel("escalate", "  ")).toBe("Escalate");
+    expect(answerLabel("escalate", `Ask ${String.fromCodePoint(0x202e)}lead`)).toBe(
+      "Ask ⟦U+202E⟧lead",
+    );
   });
 });
