@@ -187,3 +187,88 @@ verifies("memory.dry-run-vcs-worktrees", () => {
     expect(dryRun.changes()).toEqual([]);
   });
 });
+
+verifies("memory.dry-run-vcs-remove-worktree", () => {
+  it("removes a real or recorded worktree once, and refuses an unknown one", async () => {
+    const { real } = await changedRepository();
+    const snapshot = await real.snapshot();
+    const realWorktree = await real.addWorktree(snapshot);
+    const dryRun = new DryRunVcs(real);
+    const recorded = await dryRun.addWorktree(snapshot);
+
+    await dryRun.removeWorktree(realWorktree.id);
+    await dryRun.removeWorktree(recorded.id);
+    await expect(dryRun.removeWorktree(recorded.id)).rejects.toThrow("Unknown worktree");
+    await expect(dryRun.removeWorktree("worktree-9")).rejects.toThrow("Unknown worktree");
+
+    expect(dryRun.changes()).toEqual([
+      { kind: "addWorktree", version: snapshot },
+      { kind: "removeWorktree", id: realWorktree.id },
+      { kind: "removeWorktree", id: recorded.id },
+    ]);
+    expect(await real.listWorktrees()).toEqual([realWorktree]);
+  });
+
+  it("refuses a folder that isn't a repository, and has no worktrees after an init", async () => {
+    const notRepo = new DryRunVcs(new MemoryVcs(new MemoryDefinitionStore({ "a.yaml": "1\n" })));
+    await expect(notRepo.removeWorktree("worktree-1")).rejects.toThrow("not a repository");
+    await notRepo.init();
+    await expect(notRepo.removeWorktree("worktree-1")).rejects.toThrow("Unknown worktree");
+    expect(notRepo.changes()).toEqual([{ kind: "init" }]);
+  });
+});
+
+verifies("memory.dry-run-vcs-commits", () => {
+  const ref = "refs/halonic/proposals/run-1";
+
+  it("records versions and proposals, and changes nothing", async () => {
+    const { real } = await changedRepository();
+    const before = { status: await real.status(), log: await real.log(5) };
+    const snapshot = await real.snapshot();
+    const worktree = await real.addWorktree(snapshot);
+    const dryRun = new DryRunVcs(real);
+
+    expect(
+      await dryRun.commitVersion({ message: "Create version", include: ["a.yaml"], exclude: [] }),
+    ).toBe("dry-run:commit-1");
+    expect(await dryRun.commitVersion({ message: "Everything", exclude: [] })).toBe(
+      "dry-run:commit-2",
+    );
+    expect(await dryRun.commitWorktreeTo(worktree.id, ref, { parent: snapshot })).toBe(
+      "dry-run:proposal-1",
+    );
+    await dryRun.deleteRef(ref);
+
+    expect(dryRun.changes()).toEqual([
+      { kind: "commitVersion", message: "Create version", include: ["a.yaml"], exclude: [] },
+      { kind: "commitVersion", message: "Everything", exclude: [] },
+      { kind: "commitWorktreeTo", worktreeId: worktree.id, ref, parent: snapshot },
+      { kind: "deleteRef", ref },
+    ]);
+    expect(await dryRun.readRef(ref)).toBeNull();
+    expect(await real.status()).toEqual(before.status);
+    expect(await real.log(5)).toEqual(before.log);
+  });
+
+  it("refuses bad paths, refs and parents, recording nothing", async () => {
+    const { real } = await changedRepository();
+    const snapshot = await real.snapshot();
+    const dryRun = new DryRunVcs(real);
+
+    await expect(dryRun.commitVersion({ message: "x", exclude: [".env"] })).rejects.toThrow(
+      RangeError,
+    );
+    await expect(dryRun.commitVersion({ message: "x", include: [], exclude: [] })).rejects.toThrow(
+      RangeError,
+    );
+    await expect(dryRun.commitVersion({ message: "", exclude: [] })).rejects.toThrow(/empty/);
+    await expect(dryRun.deleteRef("refs/heads/main")).rejects.toThrow(RangeError);
+    await expect(dryRun.commitWorktreeTo("w", "HEAD", { parent: snapshot })).rejects.toThrow(
+      RangeError,
+    );
+    await expect(dryRun.commitWorktreeTo("w", ref, { parent: "a".repeat(40) })).rejects.toThrow(
+      /Unknown version/,
+    );
+    expect(dryRun.changes()).toEqual([]);
+  });
+});

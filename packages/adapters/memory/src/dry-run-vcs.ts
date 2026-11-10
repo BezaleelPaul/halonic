@@ -1,14 +1,18 @@
 import {
   checkCommitId,
+  checkProposalRef,
   type Vcs,
   type VcsApplyOptions,
   type VcsCommit,
+  type VcsCommitVersionOptions,
+  type VcsCommitWorktreeOptions,
   type VcsFileDiff,
   type VcsStatus,
   type VcsWorktree,
 } from "@halonicjs/ports";
 import { parsePatch } from "./text-patch.ts";
 import { checkBranchName, checkVcsPath } from "./vcs-input.ts";
+import { versionScope } from "./vcs-version-scope.ts";
 
 /** One change a {@link DryRunVcs} was asked to make, in the order it was asked. */
 export type PlannedVcsChange =
@@ -17,6 +21,19 @@ export type PlannedVcsChange =
       readonly paths: readonly string[];
     }
   | { readonly kind: "commit"; readonly message: string }
+  | {
+      readonly kind: "commitVersion";
+      readonly message: string;
+      readonly include?: readonly string[];
+      readonly exclude: readonly string[];
+    }
+  | {
+      readonly kind: "commitWorktreeTo";
+      readonly worktreeId: string;
+      readonly ref: string;
+      readonly parent: string;
+    }
+  | { readonly kind: "deleteRef"; readonly ref: string }
   | { readonly kind: "checkout" | "createBranch"; readonly branch: string }
   | { readonly kind: "rename"; readonly from: string; readonly to: string }
   | { readonly kind: "addWorktree"; readonly version: string }
@@ -32,7 +49,7 @@ export type PlannedVcsChange =
  *
  * Unlike the dry-run definition store, reads don't show the recorded changes:
  * `status`, `diff`, `log`, `branches`, `readAt` and `listAt` describe the
- * real repository, and so do `listWorktrees` and `diffBetween`. `snapshot`
+ * real repository, and so do `listWorktrees`, `diffBetween` and `readRef`. `snapshot`
  * is read through too: it adds a commit on no branch and changes neither the
  * working tree, the index nor a branch. A recorded worktree gets an id and a
  * folder starting `dry-run:`, which no real worktree has. Git's
@@ -114,7 +131,10 @@ export class DryRunVcs implements Vcs {
     return { id, path: id, version };
   }
 
+  /** Records the removal after checking the worktree exists, counting the recorded changes in. */
   async removeWorktree(id: string): Promise<void> {
+    const isRepo = await this.#checkRepository();
+    if (!(await this.#hasWorktree(id, isRepo))) throw new Error(`Unknown worktree ${id}.`);
     this.#record({ kind: "removeWorktree", id });
   }
 
@@ -148,8 +168,51 @@ export class DryRunVcs implements Vcs {
     // Like git, which aborts on an empty message.
     if (message.trim() === "") throw new Error("The commit message is empty.");
     this.#record({ kind: "commit", message });
-    const commits = this.#changes.filter((change) => change.kind === "commit").length;
-    return `dry-run:commit-${commits}`;
+    return `dry-run:commit-${this.#count("commit", "commitVersion")}`;
+  }
+
+  /** Records Create version and returns a made-up hash starting `dry-run:`, as {@link DryRunVcs.commit} does. */
+  async commitVersion(options: VcsCommitVersionOptions): Promise<string> {
+    const { include, exclude } = versionScope(options);
+    await this.#checkPaths([...(include ?? []), ...exclude]);
+    if (options.message.trim() === "") throw new Error("The commit message is empty.");
+    const change: Extract<PlannedVcsChange, { kind: "commitVersion" }> = {
+      kind: "commitVersion",
+      message: options.message,
+      exclude: Object.freeze([...exclude]),
+    };
+    // Absent, not empty, when every change is committed: `include: []` is refused above.
+    this.#record(
+      include === undefined ? change : { ...change, include: Object.freeze([...include]) },
+    );
+    return `dry-run:commit-${this.#count("commit", "commitVersion")}`;
+  }
+
+  /**
+   * Records the proposal after checking the ref, and that the repository
+   * has the parent, and returns a made-up hash starting `dry-run:`. Whether
+   * the ref already exists or the worktree is known isn't predicted.
+   */
+  async commitWorktreeTo(
+    worktreeId: string,
+    ref: string,
+    options: VcsCommitWorktreeOptions,
+  ): Promise<string> {
+    checkProposalRef(ref);
+    checkCommitId(options.parent);
+    await this.#source.listAt(options.parent);
+    this.#record({ kind: "commitWorktreeTo", worktreeId, ref, parent: options.parent });
+    return `dry-run:proposal-${this.#count("commitWorktreeTo")}`;
+  }
+
+  readRef(ref: string): Promise<string | null> {
+    return this.#source.readRef(ref);
+  }
+
+  async deleteRef(ref: string): Promise<void> {
+    checkProposalRef(ref);
+    await this.#checkRepository();
+    this.#record({ kind: "deleteRef", ref });
   }
 
   async checkout(branch: string): Promise<void> {
@@ -183,8 +246,32 @@ export class DryRunVcs implements Vcs {
     return [...this.#changes];
   }
 
+  /** How many changes of those kinds are recorded so far. */
+  #count(...kinds: PlannedVcsChange["kind"][]): number {
+    return this.#changes.filter((change) => kinds.includes(change.kind)).length;
+  }
+
   #record(change: PlannedVcsChange): void {
     this.#changes.push(Object.freeze(change));
+  }
+
+  /**
+   * Whether the worktree exists once the recorded changes are counted in. A
+   * folder only about to be made a repository has no worktrees of its own.
+   */
+  async #hasWorktree(id: string, isRepo: boolean): Promise<boolean> {
+    const removed = this.#changes.some(
+      (change) => change.kind === "removeWorktree" && change.id === id,
+    );
+    if (removed) return false;
+    // Recorded worktrees are numbered from 1, as addWorktree makes their ids.
+    const added = Array.from(
+      { length: this.#count("addWorktree") },
+      (_, index) => `dry-run:worktree-${index + 1}`,
+    );
+    if (added.includes(id)) return true;
+    if (!isRepo) return false;
+    return (await this.#source.listWorktrees()).some((worktree) => worktree.id === id);
   }
 
   /** Throws, as the real repository would, when the folder isn't one and no `init` is recorded. */

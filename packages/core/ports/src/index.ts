@@ -265,10 +265,14 @@ export {
 } from "./unfenced-run-consent-store.ts";
 export {
   checkCommitId,
+  checkProposalRef,
+  unversionedFolders,
   type Vcs,
   type VcsApplyOptions,
   type VcsChange,
   type VcsCommit,
+  type VcsCommitVersionOptions,
+  type VcsCommitWorktreeOptions,
   type VcsDiffStatus,
   type VcsFileDiff,
   type VcsFileStatus,
