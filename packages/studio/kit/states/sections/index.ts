@@ -4,6 +4,7 @@ import { buttonSection } from "./button.tsx";
 import { cardSection } from "./card.tsx";
 import { checkboxSection } from "./checkbox.tsx";
 import { copyButtonSection } from "./copy-button.tsx";
+import { disclosureSection } from "./disclosure.tsx";
 import { externalLinkSection } from "./external-link.tsx";
 import { fieldSection } from "./field.tsx";
 import { formRowsSection } from "./form-rows.tsx";
@@ -35,6 +36,7 @@ export const SECTIONS: readonly PartSection[] = [
   checkboxSection,
   switchSection,
   kbdSection,
+  disclosureSection,
   viewOnlyLineSection,
   actionBarSection,
   formRowsSection,

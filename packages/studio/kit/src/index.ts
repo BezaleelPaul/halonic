@@ -48,6 +48,11 @@ export {
   type PushModalRegions,
 } from "./dialog/modal-regions.tsx";
 export {
+  Disclosure,
+  type DisclosureProps,
+  type DisclosureTone,
+} from "./disclosure/disclosure.tsx";
+export {
   EmptyState,
   type EmptyStateAction,
   type EmptyStateProps,
