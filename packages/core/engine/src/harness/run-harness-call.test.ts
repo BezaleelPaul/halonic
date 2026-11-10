@@ -2,9 +2,15 @@ import type { RunEventBody } from "@halonicjs/events";
 import { isRunFailureError } from "@halonicjs/ports";
 import { StopSource } from "@halonicjs/std";
 import { verifies } from "@halonicjs/testing-spec";
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import { writerAgent } from "../kernel/kernel-test-kit.test-helper.ts";
-import { finished, harnessPorts, startLimits, stillOpen } from "./harness-test-kit.test-helper.ts";
+import {
+  finished,
+  harnessPorts,
+  noApprovals,
+  startLimits,
+  stillOpen,
+} from "./harness-test-kit.test-helper.ts";
 import { type HarnessCall, type HarnessEventLog, runHarnessCall } from "./run-harness-call.ts";
 
 const call: HarnessCall = {
@@ -25,7 +31,7 @@ const goingOn = new StopSource().signal;
 
 /** A log that stores nothing, except where `append` says. */
 function logOf(append: (event: RunEventBody) => Promise<void>): HarnessEventLog {
-  return { append, settled: async () => {} };
+  return { append, settled: async () => {}, whileHeld: (work) => work() };
 }
 
 /** Runs the call on the ports, and keeps what it wrote to the log. */
@@ -33,13 +39,15 @@ async function runOn(
   ports: ReturnType<typeof harnessPorts>,
   limits = startLimits().limits,
   stop = goingOn,
+  approvals = noApprovals,
 ) {
   const written: RunEventBody[] = [];
   const log = logOf(async (event) => {
     written.push(event);
   });
   try {
-    return { output: await runHarnessCall(ports.options, call, log, limits, stop), written };
+    const output = await runHarnessCall(ports.options, call, log, approvals, limits, stop);
+    return { output, written };
   } catch (error) {
     return { error, written };
   }
@@ -156,9 +164,10 @@ verifies("engine.run-harness", () => {
       settled: async () => {
         order.push(`log.settled after ${ports.steps.at(-1)}`);
       },
+      whileHeld: (work) => work(),
     };
 
-    await runHarnessCall(ports.options, call, log, startLimits().limits, goingOn);
+    await runHarnessCall(ports.options, call, log, noApprovals, startLimits().limits, goingOn);
 
     expect(order).toEqual(["log.settled after bridge.close"]);
   });
@@ -210,7 +219,7 @@ verifies("engine.run-harness-failures", () => {
     });
 
     await expect(
-      runHarnessCall(ports.options, call, log, startLimits().limits, goingOn),
+      runHarnessCall(ports.options, call, log, noApprovals, startLimits().limits, goingOn),
     ).rejects.toThrow("The disk is full.");
     expect(ports.steps).toEqual(["bridge.open", "sandbox.open", "session.close", "bridge.close"]);
   });
@@ -245,21 +254,6 @@ verifies("engine.run-harness-failures", () => {
 
     expect(isRunFailureError(error) && error.failure).toBe("harness-start-failed");
     expect(ports.steps).toEqual([]);
-  });
-
-  describe("until runs can wait on a harness", () => {
-    it("fails on an approval request and stops everything", async () => {
-      const ports = harnessPorts();
-      ports.harness.events = [
-        { type: "approval.requested", agent: "writer", callId: "c1", tool: "Bash", args: {} },
-      ];
-
-      const { error, written } = await runOn(ports);
-
-      expect(String(error)).toContain("can't wait for one yet");
-      expect(written.map((event) => event.type)).not.toContain("approval.requested");
-      expect(ports.steps.slice(-3)).toEqual(["harness.cancel", "session.close", "bridge.close"]);
-    });
   });
 
   it("fails when the stream ends without the agent's result", async () => {
