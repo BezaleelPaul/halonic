@@ -5,8 +5,11 @@ import { vcsHardenedCases } from "./vcs-hardened.ts";
 import type { MakeVcs } from "./vcs-harness.ts";
 import { changesOf, lines } from "./vcs-helpers.ts";
 import { vcsHistoryCases } from "./vcs-history.ts";
+import { linePatch } from "./vcs-patch-inputs.ts";
 import { vcsRemoteCases } from "./vcs-remote.ts";
 import { vcsSafetyCases } from "./vcs-safety.ts";
+import { unknownCommit } from "./vcs-version-inputs.ts";
+import { vcsVersionContracts } from "./vcs-versions.ts";
 
 /**
  * The contract every {@link Vcs} adapter passes. The harness builds each
@@ -37,6 +40,8 @@ export function vcsContract(name: string, make: MakeVcs): void {
       vcsHardenedCases(make);
     });
   });
+
+  vcsVersionContracts(name, make);
 }
 
 function repositoryCases(make: MakeVcs): void {
@@ -109,6 +114,15 @@ async function expectNoRepository(vcs: Vcs): Promise<void> {
     ["remotes", () => vcs.remotes()],
     ["pull", () => vcs.pull()],
     ["push", () => vcs.push()],
+    ["snapshot", () => vcs.snapshot()],
+    ["readAt", () => vcs.readAt(unknownCommit, "a.yaml")],
+    ["listAt", () => vcs.listAt(unknownCommit)],
+    ["rename", () => vcs.rename("a.yaml", "b.yaml")],
+    ["addWorktree", () => vcs.addWorktree(unknownCommit)],
+    ["removeWorktree", () => vcs.removeWorktree("missing")],
+    ["listWorktrees", () => vcs.listWorktrees()],
+    ["diffBetween", () => vcs.diffBetween(unknownCommit, "missing")],
+    ["applyPatch", () => vcs.applyPatch(linePatch("a.yaml", "1", "2"), { reverse: false })],
   ];
   for (const [method, call] of calls) await expect(call(), method).rejects.toThrow();
   expect((await vcs.status()).isRepo).toBe(false);
