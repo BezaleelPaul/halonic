@@ -9,7 +9,7 @@ loop of one model turn, which the local chat turn runs.
 
 | Part                 | What it does                                                                                                                                                                                                      | Requirement                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `LocalExecutor`      | the `RunExecutor` that runs the engine in this process: chat turns, and with `runs` set, workflow runs                                                                                                            | `engine.local-chat-turn`, `engine.local-runs`                                       |
+| `LocalExecutor`      | the `RunExecutor` that runs the engine in this process: chat turns, and with `runs` set, workflow runs                                                                                                            | `engine.local-chat-turn`, `engine.local-chat-harness`, `engine.local-runs`          |
 |                      | streams a run's events from the store to `subscribe`, in order, and closes the stream once the run has ended                                                                                                      | `engine.local-run-subscribe`                                                        |
 |                      | fails a run whose call fails, with the reason `runFailureReasonOf` gives the error                                                                                                                                | `engine.run-call-fails`                                                             |
 |                      | fails a run whose step asks for an effect it can't carry out yet, and sets no timer for it                                                                                                                        | `engine.local-runs-unbuilt-effect`                                                  |
@@ -95,7 +95,7 @@ For now they pass values through unchanged.
 `LocalExecutorOptions` is what a `LocalExecutor` is built from; `maxRounds` defaults to
 `defaultMaxRounds` (20).
 
-A chat turn belongs to no run, so `LocalExecutor.chatTurn` keeps no run log; it returns the
+A chat turn belongs to no run, so `LocalExecutor.chatTurn` keeps no run log (also when the agent runs in a harness); it returns the
 turn's messages in `turn`, what it refused in `refusals` and the models it skipped in `skipped`.
 Runs of agents will log their turns through a `RunStoreTurnLog`.
 
@@ -144,7 +144,7 @@ forwards its timers to `LocalExecutor.onTimer`. A model call is carried out from
 (`pendingCall` keeps the prompt), and a timer that is late or delivered twice changes nothing. A
 run still waiting on a call when the engine stops is `running`, so the next start ends it as
 `interrupted`. An effect the executor can't carry out yet fails the run rather than leaving it going with no
-timer: a harness run with reason `harness-unavailable`, a tool call with reason `error`. A failed call becomes an `effect-failed` input, and the run fails with the
+timer: a harness run when the executor has no `harnesses` (reason `harness-unavailable`), a tool call with reason `error`. A failed call becomes an `effect-failed` input, and the run fails with the
 reason `runFailureReasonOf` gives. For now a run's model call sends the state's prompt to its agent's
 model with Halonic's tools and the tools its file grants; the agent's own prompt and the run log
 of the call come with the agent loop. `subscribe` reads every event from the store, after each append the executor makes; it
@@ -205,6 +205,28 @@ the log; if the log moves on while the engine ends a run, something still writes
 engine leaves it as it is. It returns the ids of the runs it ended (requirement
 `engine.end-interrupted-runs`). It assumes one engine per run store, and waking a parent that waits
 on a run it ended is the run kernel's job (HAL-186).
+
+## Harness runs
+
+A `run-harness` effect runs the agent in a harness program (Claude Code or Codex) in a sandbox, through
+`runHarnessCall`. The host's `PlacementPolicy.where` says where: `{ runsOn: "sandbox" }`, or
+`{ runsOn: "this-computer", chosenAt }` when a person chose this computer for the agent's file. The
+engine can only ask, never choose. It checks the sandbox for that placement first; when the check
+fails it starts nothing, not even the bridge, and the run fails with `sandbox-not-ready` and the
+check's reason code (`sandboxReason` on `run.failed`), which `runFailureReasonOf` takes from the
+engine's own `SandboxNotReadyError`. A step logs `sandbox.started`, then `sandbox.opened` or, for a
+step on this computer, `sandbox.off` with `chosenAt` (never both), then `harness.started`
+(requirements `engine.run-harness`, `engine.run-harness-failures`).
+
+A chat turn with an agent that runs in a harness is one harness call in the agent's sandbox, with
+the same sandbox, bridge and start limits (`ChatHarnessTurns`, requirement `engine.chat-harness-turn`).
+Each message starts a new call whose prompt carries the earlier messages; the caller's tools aren't
+offered to it. A chat can't wait for a person, so an approval the harness asks for is answered
+`approved: false` and shows in `refusals`. The turn keeps no run log, and stopping the engine stops
+its harness call as it stops a run's. `LocalExecutor.chatTurn` reads the agent's file (from the host's
+`chatAgentOf`) and, when it names a harness program, runs the turn this way with the harness ports of
+its `runs`, calling no model; without `runs.harnesses` that turn rejects instead of falling back to
+Halonic's own loop (requirement `engine.local-chat-harness`).
 
 ## Budgets
 
