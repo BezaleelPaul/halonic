@@ -4,31 +4,25 @@
 
 import { type RunEvent, type RunSummary, summarize } from "@halonicjs/events";
 import type {
-  BlobStore,
   Clock,
-  IdGenerator,
   RunEventListener,
-  RunStore,
   RunSubscription,
   ScheduledTimer,
-  Scheduler,
   SendOptions,
   StartRunRequest,
 } from "@halonicjs/ports";
 import { encodeUtf8 } from "@halonicjs/std";
-import type { Budget } from "../budget/budget.ts";
 import type { BudgetCheck } from "../budget/keep-to-budget.ts";
-import { spendOf } from "../budget/spend.ts";
-import type { HarnessRunsOptions } from "../harness/harness-host.ts";
 import { runHarnessCall } from "../harness/run-harness-call.ts";
 import { SerialRunLog } from "../harness/serial-run-log.ts";
 import { checkStartTimeouts } from "../harness/start-limits.ts";
 import type {
+  CallToolEffect,
   DecideInput,
   Effect,
   ModelCallResult,
-  RunDefinitions,
   StartChildEffect,
+  ToolResult,
 } from "../kernel/decide-types.ts";
 import { InputRefused } from "../kernel/input-refused.ts";
 import {
@@ -41,48 +35,24 @@ import { readRun, step } from "../kernel/step.ts";
 import { childNow, childStart, receiverOf } from "./child-runs.ts";
 import { endInterruptedRuns } from "./end-interrupted-runs.ts";
 import { LiveHarnessCalls } from "./live-harness-calls.ts";
+import { budgetCheckOf, builtEffectsOf, type LocalRunsOptions } from "./local-runs-options.ts";
 import { providerTextOf } from "./provider-text-of.ts";
+import { RunConnectorCallRunner } from "./run-connector-call-runner.ts";
 import { runFailureReasonOf } from "./run-failure-reason-of.ts";
 import { RunFeed } from "./run-feed.ts";
 import { StartDeadlines } from "./start-deadlines.ts";
-
-/** What the local executor needs to run workflows, on top of what chat turns need. */
-export interface LocalRunsOptions {
-  readonly store: RunStore;
-  /** Where each run keeps the definitions it started with. */
-  readonly blobs: BlobStore;
-  /**
-   * Wakes runs. Its listener's `onTimer` must call the executor's `onTimer`;
-   * create it with a listener that forwards to the executor once it exists.
-   */
-  readonly scheduler: Scheduler;
-  /** Gives a run its id when the start request names none. */
-  readonly ids: IdGenerator;
-  /**
-   * The definitions a new run of a workflow starts with, as the workspace has
-   * them now. The run keeps them, and never reads the workspace again.
-   *
-   * @throws when the hub or the workflow doesn't exist
-   */
-  definitionsOf(hubId: string, workflowId: string): Promise<RunDefinitions>;
-  /**
-   * What runs whose agents name a harness need. Without it, such a run fails
-   * at its harness step with an error that names the `run-harness` effect.
-   */
-  readonly harnesses?: HarnessRunsOptions;
-  /**
-   * The workspace's run and monthly budget as it is now, read before every
-   * model call and harness run; `undefined` sets none. Without it, no budget
-   * stops a run.
-   */
-  budget?(): Promise<Budget | undefined>;
-}
 
 /**
  * Carries out a model call a run waits on, and gives the model's answer, or
  * the tool call the agent stopped at because it needs a person's OK.
  */
 export type CallModel = (run: RunState, call: PendingCall) => Promise<ModelCallResult>;
+
+/**
+ * Makes a connector call a run recorded, and gives its result. It never
+ * throws: a call that fails gives the outcome it had.
+ */
+export type CallTool = (effect: CallToolEffect) => Promise<ToolResult>;
 
 /** The longest run id, in UTF-8 bytes, because it is a `Scheduler` key. */
 const maxRunIdBytes = 256;
@@ -96,32 +66,24 @@ const callTimer = "call:";
 const harnessTimer = "harness:";
 const stateTimer = "timer:";
 const childTimer = "child:";
+const toolTimer = "tool:";
 
 /** How a call a run waits on is carried out: a model call, or a run of the agent's harness. */
 type CallKind = "model" | "harness";
 
-/**
- * The effects this executor carries out: harness runs only when it has
- * `harnesses`. Tool calls arrive with the agent loop (4a).
- */
-function builtEffectsOf(options: LocalRunsOptions): ReadonlySet<Effect["type"]> {
-  const built: Effect["type"][] = ["call-model", "set-timer", "start-child", "tell-parent"];
-  if (options.harnesses !== undefined) built.push("run-harness");
-  return new Set(built);
-}
-
-/** The budget check of runs in `options.store`, when the options give a budget. */
-function budgetCheckOf(options: LocalRunsOptions): BudgetCheck | undefined {
-  const budget = options.budget;
-  if (budget === undefined) return undefined;
-  return { budget, spend: (run, at) => spendOf(options.store, run, at) };
-}
+/** Without `connectorCalls`, no `call-tool` effect gets this far; this answers one anyway. */
+const noConnectorCalls: CallTool = async () => ({
+  type: "tool",
+  result: "The call wasn't made: this engine makes no connector calls.",
+  outcome: "error",
+});
 
 /** Runs workflows in this process for the local executor. */
 export class LocalRuns {
   readonly #options: LocalRunsOptions;
   readonly #clock: Clock;
   readonly #callModel: CallModel;
+  readonly #connectorCalls: RunConnectorCallRunner;
   readonly #feed: RunFeed;
   readonly #startDeadlines: StartDeadlines;
   readonly #builtEffects: ReadonlySet<Effect["type"]>;
@@ -134,7 +96,12 @@ export class LocalRuns {
   #closed = false;
 
   /** @throws RangeError when a start limit in `harnesses` isn't a whole number of milliseconds of 1 or more */
-  constructor(options: LocalRunsOptions, clock: Clock, callModel: CallModel) {
+  constructor(
+    options: LocalRunsOptions,
+    clock: Clock,
+    callModel: CallModel,
+    callTool: CallTool = noConnectorCalls,
+  ) {
     checkStartTimeouts(options.harnesses?.startTimeoutsMs);
     this.#options = options;
     this.#clock = clock;
@@ -143,6 +110,14 @@ export class LocalRuns {
     this.#startDeadlines = new StartDeadlines(options.scheduler, clock);
     this.#builtEffects = builtEffectsOf(options);
     this.#budget = budgetCheckOf(options);
+    this.#connectorCalls = new RunConnectorCallRunner({
+      store: options.store,
+      deadlines: this.#startDeadlines,
+      callTool,
+      record: (runId, input) => this.#recordIfTaken(runId, input),
+      now: () => this.#now(),
+      isClosed: () => this.#closed,
+    });
   }
 
   /**
@@ -230,6 +205,8 @@ export class LocalRuns {
       await this.#recordIfTaken(timer.key, { type: "timer", at: this.#now(), key });
     } else if (timer.timerId.startsWith(childTimer)) {
       await this.#hearFromChild(timer.key, timer.timerId.slice(childTimer.length));
+    } else if (timer.timerId.startsWith(toolTimer)) {
+      await this.#connectorCalls.make(timer.key, timer.timerId.slice(toolTimer.length));
     }
   }
 
@@ -263,6 +240,7 @@ export class LocalRuns {
    * finds the runs it ended.
    */
   async #endInterruptedRuns(): Promise<void> {
+    await this.#connectorCalls.markCutShort();
     const ended = await endInterruptedRuns(this.#options.store, this.#clock);
     for (const runId of ended) this.#feed.notify(runId);
     for (const runId of ended) {
@@ -390,6 +368,8 @@ export class LocalRuns {
       await scheduler.schedule(run.runId, `${callTimer}${effect.callId}`, this.#now());
     } else if (effect.type === "run-harness") {
       await scheduler.schedule(run.runId, `${harnessTimer}${effect.callId}`, this.#now());
+    } else if (effect.type === "call-tool") {
+      await scheduler.schedule(run.runId, `${toolTimer}${effect.callId}`, this.#now());
     } else if (effect.type === "set-timer") {
       await scheduler.schedule(run.runId, `${stateTimer}${effect.key}`, effect.at);
     } else if (effect.type === "start-child") {
