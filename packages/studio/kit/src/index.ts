@@ -87,6 +87,7 @@ export {
   type FilterChipsProps,
   type FilterChipsToggles,
   type FilterOption,
+  type FilterPicker,
   type FilterToggle,
 } from "./filter-chips/filter-chips.tsx";
 export {
