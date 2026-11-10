@@ -1,15 +1,22 @@
 import {
   type Clock,
   checkCommitId,
+  checkWorkspacePath,
   type DefinitionStore,
+  isPrivateWorkspacePath,
   type Vcs,
+  type VcsApplyOptions,
   type VcsChange,
   type VcsCommit,
+  type VcsFileDiff,
   type VcsStatus,
+  type VcsWorktree,
 } from "@halonicjs/ports";
 import { ManualClock } from "./clock.ts";
+import type { MemoryDefinitionStore } from "./definition-store.ts";
 import { unifiedDiff } from "./line-diff.ts";
 import { sha256Hex } from "./sha256.ts";
+import { patchedFiles } from "./text-patch.ts";
 import { checkBranchName, checkVcsPath } from "./vcs-input.ts";
 import {
   clashingBranch,
@@ -31,6 +38,7 @@ import {
   treeOf,
   unstagedChanges,
 } from "./vcs-repository.ts";
+import { MemoryWorktrees } from "./vcs-worktrees.ts";
 
 /** Options for {@link MemoryVcs}; each one is optional. */
 export interface MemoryVcsOptions {
@@ -52,6 +60,7 @@ export class MemoryVcs implements Vcs {
   readonly #clock: Clock;
   readonly #author: string;
   #repo: Repository | null = null;
+  readonly #worktrees = new MemoryWorktrees();
 
   /** @param files - the working tree; the folder is not a repository until `init` */
   constructor(files: DefinitionStore, options: MemoryVcsOptions = {}) {
@@ -245,6 +254,61 @@ export class MemoryVcs implements Vcs {
     repo.head = name;
   }
 
+  async addWorktree(version: string): Promise<VcsWorktree> {
+    checkCommitId(version);
+    return this.#worktrees.add(version, this.#treeAt(version));
+  }
+
+  async removeWorktree(id: string): Promise<void> {
+    this.#requireRepo();
+    this.#worktrees.remove(id);
+  }
+
+  async listWorktrees(): Promise<VcsWorktree[]> {
+    this.#requireRepo();
+    return this.#worktrees.list();
+  }
+
+  async diffBetween(version: string, worktreeId: string): Promise<VcsFileDiff[]> {
+    checkCommitId(version);
+    return this.#worktrees.diff(this.#treeAt(version), worktreeId);
+  }
+
+  /** A worktree's files, for tests and the demo to change. Not part of the port. */
+  worktreeFiles(id: string): MemoryDefinitionStore {
+    return this.#worktrees.files(id);
+  }
+
+  /**
+   * Commits a private entry, such as `.env`, on the current branch, as a
+   * repository cloned from someone who committed theirs holds it. Not part
+   * of the port, which refuses to stage one. The working tree is left as it
+   * is; write the entry there with {@link MemoryDefinitionStore.writePrivate}.
+   *
+   * @throws RangeError when `path` is unsafe or isn't private
+   */
+  async commitPrivate(path: string, content: string): Promise<string> {
+    checkWorkspacePath(path);
+    if (!isPrivateWorkspacePath(path)) throw new RangeError(`${path} isn't a private entry.`);
+    const repo = this.#requireRepo();
+    repo.index.set(path, content);
+    const hash = await this.#storeCommit(repo, new Map(repo.index), `Add ${path}`);
+    repo.branches.set(repo.head, hash);
+    return hash;
+  }
+
+  async applyPatch(patch: string, options: VcsApplyOptions = {}): Promise<void> {
+    this.#requireRepo();
+    const results = await patchedFiles(patch, options.reverse === true, checkVcsPath, (path) =>
+      this.#files.read(path),
+    );
+    // Every file was patched in memory first, so a mismatch above changed nothing.
+    for (const [path, content] of results) {
+      if (content === null) await this.#files.remove(path);
+      else await this.#files.write(path, content);
+    }
+  }
+
   async init(): Promise<void> {
     if (this.#repo === null) this.#initialized("main");
   }
@@ -353,7 +417,9 @@ export class MemoryVcs implements Vcs {
   }
 
   async #unstaged(repo: Repository): Promise<VcsChange[]> {
-    return unstagedChanges(repo.index, await this.#readAll(await this.#files.list()));
+    // The store never lists a private entry, so one HEAD tracks would look deleted.
+    const tracked = new Map([...repo.index].filter(([path]) => !isPrivateWorkspacePath(path)));
+    return unstagedChanges(tracked, await this.#readAll(await this.#files.list()));
   }
 
   /** Refuses to switch to the tree `to` over changes it would lose; see {@link switchProblem}. */
