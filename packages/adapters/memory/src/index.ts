@@ -1,6 +1,12 @@
 export { MemoryAgentPlacementStore } from "./agent-placement-store.ts";
 export { MemoryBlobStore } from "./blob-store.ts";
 export { ManualClock, manualClockStart } from "./clock.ts";
+export {
+  type MemoryConnectorCall,
+  MemoryConnectorFactory,
+  type MemoryConnectorKind,
+  type MemoryConnectorServer,
+} from "./connector-client.ts";
 export { MemoryCoordination } from "./coordination.ts";
 export { MemoryDefinitionStore } from "./definition-store.ts";
 export {
