@@ -6,4 +6,9 @@ export {
   sandboxJournalFolder,
   trustFolder,
 } from "./profile-folder.ts";
-export { type WorkspaceFolders, workspaceFolders } from "./workspace-folders.ts";
+export {
+  checkDeploymentId,
+  isDeploymentId,
+  type WorkspaceFolders,
+  workspaceFolders,
+} from "./workspace-folders.ts";
