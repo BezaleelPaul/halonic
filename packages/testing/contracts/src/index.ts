@@ -135,6 +135,8 @@ export {
 export {
   invalidSecretNames,
   longestSecretName,
+  lookalikeSecretNames,
+  objectPropertySecretNames,
   unquotableSecretNames,
 } from "./secret-names.ts";
 export {
