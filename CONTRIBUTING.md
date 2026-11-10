@@ -169,6 +169,11 @@ Halonic has one firm rule: **nothing that works may break.**
   `fix(routines): fire interval triggers at the right time`.
 - **Fill in the template:** what and why, the requirement IDs, how you tested
   it, docs, a changeset sentence and AI assistance.
+- **The `built-on` label is a maintainer's job.** The `built-on-label` check
+  needs a `built-on:paperclip` or `built-on:halonic` label that outside
+  contributors can't add. A maintainer adds it during review, so a red
+  `built-on-label` before then is expected. Leave the template's `Built-on:`
+  line empty.
 - **Write the changeset sentence** in the template's Changeset section if users
   will notice the change. Write one sentence a user would understand. Don't run
   `pnpm changeset` yet: the first release, 0.1.0, is a hand-made pull request,
