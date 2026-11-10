@@ -5,8 +5,11 @@
 
 import { ReviewFiles, type ReviewServiceOptions } from "./review-files.ts";
 import { proposalRefusal } from "./review-gate.ts";
+import { type FileWriter, ReviewWriteHook } from "./review-hook.ts";
+import { decidePart, fileReview } from "./review-parts.ts";
 import type { ReviewCard, ReviewRecord } from "./review-record.ts";
 import type {
+  FileReview,
   ItemToReview,
   ProposedWrite,
   ProposeOutcome,
@@ -20,6 +23,9 @@ import type {
 export type { ReviewServiceOptions } from "./review-files.ts";
 
 type FileDecision = (record: ReviewRecord) => Promise<ReviewedFile | "held">;
+
+/** The targets that cover whole files. */
+type FilesTarget = Exclude<ReviewTarget, { kind: "part" }>;
 
 /**
  * The assistant's changes to review in one workspace. Each file with
@@ -40,8 +46,16 @@ type FileDecision = (record: ReviewRecord) => Promise<ReviewedFile | "held">;
 export class ReviewService {
   private readonly files: ReviewFiles;
 
+  /**
+   * The write hook (`app.review-other-writes-merge`): give it to the
+   * workspace's `ReviewingDefinitionStore`, so every other write to a file
+   * with changes to review moves its baseline along.
+   */
+  readonly writer: FileWriter;
+
   constructor(options: ReviewServiceOptions) {
     this.files = new ReviewFiles(options);
+    this.writer = new ReviewWriteHook(this.files);
   }
 
   /**
@@ -86,11 +100,15 @@ export class ReviewService {
   }
 
   /**
-   * Accepts what the target covers: the baseline becomes the file, so its
-   * record goes. The files aren't touched. For a card or a chat, a record
-   * that can't be read is removed without telling the listeners.
+   * Accepts what the target covers. The files aren't touched: for a part
+   * the baseline takes it over; for whole files the baseline becomes the
+   * file, so the record goes. For a card or a chat, a record that can't be
+   * read is removed without telling the listeners.
    */
   accept(target: ReviewTarget): Promise<ReviewOutcome> {
+    if (target.kind === "part") {
+      return decidePart(this.files, target, "accept");
+    }
     return this.decide(target, async (record) => {
       await this.files.putRecord(record.path, null);
       return { path: record.path, record: { before: record, after: null } };
@@ -98,13 +116,17 @@ export class ReviewService {
   }
 
   /**
-   * Rejects what the target covers: each file gets its baseline back (a
-   * file the assistant created is removed), and its record goes. A file
-   * that changed outside Halonic since it was last seen is left alone and
-   * listed in `held`. For a card or a chat, a record that can't be read is
-   * removed without telling the listeners.
+   * Rejects what the target covers: the baseline's lines go back into the
+   * file for a part, and each whole file gets its baseline back (a file the
+   * assistant created is removed) and loses its record. A file that changed
+   * outside Halonic since it was last seen is left alone and listed in
+   * `held`. For a card or a chat, a record that can't be read is removed
+   * without telling the listeners.
    */
   reject(target: ReviewTarget): Promise<ReviewOutcome> {
+    if (target.kind === "part") {
+      return decidePart(this.files, target, "reject");
+    }
     return this.decide(target, async (record) => {
       const current = await this.files.store.read(record.path);
       const restored = await this.files.putFile(record.path, record.seen, record.baseline);
@@ -152,7 +174,36 @@ export class ReviewService {
       }
     }
     this.files.changed(done.map((file) => file.path));
-    return { step: { files: done }, held };
+    return { status: "done", step: { files: done }, held };
+  }
+
+  /**
+   * The changes to review in one file (`app.review-changes-in`), worked
+   * out from the saved file, or from `current`, the editor's unsaved text,
+   * while the person types. `null` for a file without changes to review.
+   * Parts from unsaved text are for showing only: the baseline moves on
+   * save, so Accept or Reject of one of them answers `stale`. Save before
+   * deciding one.
+   */
+  async changesIn(path: string, current?: string): Promise<FileReview | null> {
+    const record = await this.files.read(path);
+    if (record === null) {
+      return null;
+    }
+    const text = current ?? (await this.files.store.read(path));
+    return fileReview(this.files, record, text);
+  }
+
+  /** The changes to review in each file one chat card covers, sorted by path, for the card. */
+  async changesForCard(card: ReviewCard): Promise<readonly FileReview[]> {
+    const reviews: FileReview[] = [];
+    for (const path of await this.pathsOf({ kind: "card", card })) {
+      const review = await this.changesIn(path);
+      if (review !== null) {
+        reviews.push(review);
+      }
+    }
+    return reviews;
   }
 
   /**
@@ -259,7 +310,7 @@ export class ReviewService {
    * longer covers is skipped: a write for another card may have taken it
    * over since the files were listed.
    */
-  private async decide(target: ReviewTarget, decision: FileDecision): Promise<ReviewOutcome> {
+  private async decide(target: FilesTarget, decision: FileDecision): Promise<ReviewOutcome> {
     const done: ReviewedFile[] = [];
     const held: string[] = [];
     for (const path of await this.pathsOf(target)) {
@@ -274,10 +325,10 @@ export class ReviewService {
       }
     }
     this.files.changed(done.map((file) => file.path));
-    return { step: { files: done }, held };
+    return { status: "done", step: { files: done }, held };
   }
 
-  private async pathsOf(target: ReviewTarget): Promise<string[]> {
+  private async pathsOf(target: FilesTarget): Promise<string[]> {
     if (target.kind === "file") {
       return [target.path];
     }
@@ -295,7 +346,7 @@ export class ReviewService {
 }
 
 /** Whether the target covers the file of `record`. */
-function covers(target: ReviewTarget, record: ReviewRecord): boolean {
+function covers(target: FilesTarget, record: ReviewRecord): boolean {
   switch (target.kind) {
     case "file":
       return record.path === target.path;
