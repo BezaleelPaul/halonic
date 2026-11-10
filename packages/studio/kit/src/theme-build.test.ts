@@ -143,9 +143,12 @@ describe("theme.css built by Tailwind: the Switch", () => {
 describe("theme.css built by Tailwind: the Slider", () => {
   it("draws a 6px track, filled primary up to --slider-fill, and a 16px thumb in a 2px surface-raised ring, in each engine", async () => {
     const css = await buildCss(["slider"]);
-    const desktop = css.slice(css.indexOf(".slider {"), css.indexOf("@media (width < 600px)"));
+    const desktop = css.slice(
+      css.indexOf(".slider {"),
+      css.indexOf("@media (forced-colors: active)"),
+    );
     expect(desktop).toMatch(
-      /&::-webkit-slider-runnable-track \{[^}]*height: 6px;[^}]*var\(--color-primary\) var\(--slider-fill, 0%\)[^}]*var\(--color-surface-muted\)[^}]*var\(--color-border-control\)/,
+      /&::-webkit-slider-runnable-track \{[^}]*height: 6px;[^}]*var\(--color-primary\) var\(--slider-fill\)[^}]*var\(--color-surface-muted\)[^}]*var\(--color-border-control\)/,
     );
     expect(desktop).toMatch(
       /&::-moz-range-track \{[^}]*height: 6px;[^}]*border: 1px solid var\(--color-border-control\);/,
@@ -173,14 +176,29 @@ describe("theme.css built by Tailwind: the Slider", () => {
     );
   });
 
-  it("gives the thumb a 24px grab area on a phone, and keeps an edge and system colours in high contrast", async () => {
+  it("ends the fill under the thumb's centre, and keeps an unavailable thumb primary", async () => {
     const css = await buildCss(["slider"]);
-    const phone = css.slice(css.indexOf("@media (width < 600px)"), css.indexOf("&[aria-disabled"));
-    expect(phone).toMatch(
-      /&::-webkit-slider-thumb \{\s*width: 24px;\s*height: 24px;\s*margin-top: -10px;\s*border: 4px solid transparent;/,
+    expect(css).toMatch(/--slider-thumb: 16px;/);
+    // Tailwind wraps the calc() over lines, so compare it with the spaces folded.
+    expect(css.replace(/\s+/g, " ")).toContain(
+      "--slider-fill: calc( var(--slider-thumb) / 2 + (100% - var(--slider-thumb)) * var(--slider-ratio, 0) );",
     );
-    expect(phone).toMatch(
-      /outline: 2px solid var\(--color-surface-raised\);\s*outline-offset: -4px;/,
+    const unavailable = css.slice(css.indexOf('&[aria-disabled="true"] {'));
+    expect(unavailable).toMatch(
+      /&::-webkit-slider-thumb \{\s*background-color: var\(--color-primary\);\s*\}\s*&::-moz-range-thumb \{\s*background-color: var\(--color-primary\);/,
+    );
+    // After the hover and press variants, so it wins over them.
+    expect(css.indexOf('&[aria-disabled="true"] {')).toBeGreaterThan(css.indexOf("&:active {"));
+  });
+
+  it("keeps the 16px thumb without a grab area on a phone, and an edge and system colours in high contrast", async () => {
+    const css = await buildCss(["slider"]);
+    // No phone rules: the 48px-high control takes the press, and a wider thumb would show a stub
+    // of track past its round ends.
+    expect(css).not.toContain("@media (width < 600px)");
+    expect(css).not.toMatch(/--slider-thumb: 24px;/);
+    expect(css).toMatch(
+      /&::-webkit-slider-thumb \{[^}]*width: 16px;\s*height: 16px;\s*margin-top: -6px;/,
     );
     const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
     expect(forced).toMatch(/forced-color-adjust: none;/);
