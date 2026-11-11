@@ -1,16 +1,19 @@
 import { verifies } from "@halonicjs/testing-spec";
 import { describe, expect, it } from "vitest";
-import { type PathLookup, type ProgramStart, touchesSkillScripts } from "./scripts-folder.ts";
+import type { ProgramStart } from "../../shared/program-start.ts";
+import { type PathLookup, touchesSkillScripts } from "./scripts-folder.ts";
 
 /**
- * A file system with one link, `/w/innocent`, that leads into a skill's
- * scripts. Paths are resolved the POSIX way, which is enough for the rule;
+ * A file system with links that lead into a skill's scripts: `/w/innocent`,
+ * and `/w/my link`, `/w/a:b` and `/w/a@b`, whose names hold a separator. Paths are resolved the POSIX way, which is enough for the rule;
  * the adapters' tests run it on Node's own `resolve` and `realpath`.
  */
 const paths: PathLookup = {
   resolve: (cwd, part) => normalize(part.startsWith("/") ? part : `${cwd}/${part}`),
   realpath: async (path) => {
-    if (path === "/w/innocent") return "/w/skills/mail/scripts/send.js";
+    if (["/w/innocent", "/w/my link", "/w/a:b", "/w/a@b"].includes(path)) {
+      return "/w/skills/mail/scripts/send.js";
+    }
     if (path === "/w/tools") return "/w/skills/mail/scripts";
     throw new Error(`nothing at ${path}`);
   },
@@ -58,7 +61,28 @@ verifies("format.skill-scripts-folder", () => {
       ["a value from the skill", start("node", ["--file=./scripts/send.js"], "/w/skills/mail")],
       ["a value that is a link", start("node", ["--file=innocent"])],
       ["a second = value", start("node", ["--define=KEY=skills/mail/scripts/send.js"])],
+      ["a link with a space in its name", start("node", ["--file=my link"])],
+      ["a link with a : in its name", start("node", ["--file=a:b"])],
+      ["a link with an @ in its name", start("node", ["--file=a@b"])],
+      ["a link with a : after a second =", start("node", ["--define=KEY=a:b"])],
     ])("is true for %s joined with = (HAL-3628)", async (_, bad) => {
+      expect(await touchesSkillScripts(bad, paths)).toBe(true);
+    });
+
+    it.each([
+      ["a link after a second =", start("node", ["--define=KEY=innocent"])],
+      ["a path after a :", start("node", ["file:skills/mail/scripts/send.js"])],
+      ["a link after an @", start("node", ["@innocent"])],
+      ["a link behind a short flag", start("python", ["-cinnocent"])],
+      ["a link between spaces", start("node", ["--require innocent"])],
+      ["a module that python -m runs", start("python", ["-m", "skills.mail.scripts.send"])],
+      ["a module written with -m", start("python", ["-mskills.mail.scripts.send"])],
+      [
+        "an env value",
+        { ...start("node"), env: { NODE_OPTIONS: "--require skills/mail/scripts/send.js" } },
+      ],
+      ["a linked env value", { ...start("python"), env: { PYTHONPATH: "/usr/lib:innocent" } }],
+    ])("is true for %s, read as the working-folder guards read it (HAL-4777)", async (_, bad) => {
       expect(await touchesSkillScripts(bad, paths)).toBe(true);
     });
 
@@ -69,6 +93,9 @@ verifies("format.skill-scripts-folder", () => {
       ["other arguments", start("node", ["scripts/build.js", "skills/mail/SKILL.md"])],
       ["an option with a harmless value", start("node", ["--file=scripts/build.js"])],
       ["an option without a value", start("node", ["--verbose", "--name="])],
+      ["a harmless module", start("python", ["-m", "tools.scripts.send"])],
+      ["a harmless env value", { ...start("node"), env: { NODE_PATH: "tools/lib:/usr/lib" } }],
+      ["an env name alone", { ...start("node"), env: { "skills/mail/scripts/send.js": "1" } }],
     ])("is false for %s", async (_, fine) => {
       expect(await touchesSkillScripts(fine, paths)).toBe(false);
     });
