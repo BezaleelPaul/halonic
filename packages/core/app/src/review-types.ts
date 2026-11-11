@@ -1,7 +1,8 @@
 // The shapes the review service takes and gives (HAL-3277), apart from the
 // service, so the Studio can use them without reading the service.
 
-import type { ExpectedContent } from "@halonicjs/ports";
+import type { LeftOutReason } from "@halonicjs/events";
+import type { DefinitionSource, ExpectedContent } from "@halonicjs/ports";
 import type { LineChange } from "@halonicjs/std";
 import type { ItemPath } from "./changes/revert-parts.ts";
 import type { ProposalRefusal } from "./review-gate.ts";
@@ -161,6 +162,39 @@ export interface FileReview {
 export interface ItemToReview {
   readonly path: string;
   readonly card: ReviewCard;
+}
+
+/** One file whose changes Try it doesn't use, or uses only some of. */
+export interface LeftOutFile {
+  readonly path: string;
+  /**
+   * Why, as the run events name it. `before-trust` wins; otherwise the
+   * first of `permissions`, `trust-and-sandbox`, `connections` and
+   * `models` that a held-back part of the change is about.
+   */
+  readonly reason: LeftOutReason;
+  /**
+   * How many line changes Try it leaves out: those from the text it reads
+   * to the file, so the number matches what the person finds in Changes.
+   */
+  readonly changes: number;
+}
+
+/** What the Try it source leaves out, for "Leaves out 3 changes the assistant made before you trusted Acme". */
+export interface LeftOut {
+  /** The sum of `files[].changes`; 0 when nothing is left out. */
+  readonly total: number;
+  /** The sum of `changes` over the `before-trust` files. */
+  readonly beforeTrust: number;
+  /** In path order. */
+  readonly files: readonly LeftOutFile[];
+}
+
+/** What Try it and Test read, built in memory from the workspace and the records. */
+export interface TryItSource {
+  /** The whole workspace, with the left-out changes' baseline values instead. */
+  readonly source: DefinitionSource;
+  readonly leftOut: LeftOut;
 }
 
 /** What `ReviewService.check` found. */
