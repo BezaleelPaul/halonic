@@ -1,6 +1,12 @@
 import { spawn } from "node:child_process";
+import { generateProxyEnvVars } from "@anthropic-ai/sandbox-runtime/dist/sandbox/sandbox-utils.js";
 import { describe, expect, it } from "vitest";
-import { type RunRequest, stopGroup, windowsCommandLine } from "./srt-runner.ts";
+import {
+  type RunRequest,
+  srtNetworkVariables,
+  stopGroup,
+  windowsCommandLine,
+} from "./srt-runner.ts";
 
 /** A detached node process that ends on SIGTERM, or ignores it. */
 function start(ignoreTerm: boolean) {
@@ -45,6 +51,7 @@ describe("windowsCommandLine", () => {
     cwd: "tools\\work",
     launcherEnv: {},
     programEnv: { PATH: "tools\\bin;tools\\Program Files (x86)\\t", NAME: "a value" },
+    withoutSrtEnv: false,
     ...overrides,
   });
 
@@ -53,6 +60,19 @@ describe("windowsCommandLine", () => {
       'set "PATH=tools\\bin;tools\\Program Files (x86)\\t" && set "NAME=a value" && ' +
         '"tools\\Program Files\\nodejs\\node.exe" "tools\\work\\a b.cjs" "x&y" "dir\\\\"',
     );
+  });
+
+  it("first removes srt's proxy variables for a session without network", () => {
+    const line = windowsCommandLine(request({ withoutSrtEnv: true, programEnv: {} }));
+    expect(line.startsWith('set "http_proxy=" && set "https_proxy=" && ')).toBe(true);
+    for (const name of srtNetworkVariables) {
+      expect(line).toContain(`set "${name}=" && `);
+    }
+    expect(
+      line.endsWith(
+        '"tools\\Program Files\\nodejs\\node.exe" "tools\\work\\a b.cjs" "x&y" "dir\\\\"',
+      ),
+    ).toBe(true);
   });
 
   it.each([
@@ -64,5 +84,19 @@ describe("windowsCommandLine", () => {
     ["a variable name that is not plain", { programEnv: { "A&B": "1" } }],
   ])("refuses %s instead of guessing at the quoting", (_name, overrides) => {
     expect(() => windowsCommandLine(request(overrides))).toThrow();
+  });
+});
+
+describe("srtNetworkVariables", () => {
+  it("names every variable srt sets to lead a program to its proxy", () => {
+    // Both proxies and a token, so srt sets every variable it has. The ports are never opened.
+    const generated = generateProxyEnvVars(3128, 1080, undefined, "token", true, undefined).map(
+      (entry: string) => entry.slice(0, entry.indexOf("=")).toUpperCase(),
+    );
+    // Neither leads anywhere: one says srt runs the program, the other is set on Windows anyway.
+    const notNetwork = new Set(["SANDBOX_RUNTIME", "TMPDIR"]);
+    const listed = new Set(srtNetworkVariables.map((name) => name.toUpperCase()));
+    const missing = generated.filter((name: string) => !notNetwork.has(name) && !listed.has(name));
+    expect(missing).toEqual([]);
   });
 });
