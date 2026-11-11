@@ -35,6 +35,7 @@ function openCard(overrides: Partial<ApprovalCardProps> = {}) {
   const props: ApprovalCardProps = {
     item: createNoteItem(),
     agentName: "Sorter",
+    subagentName: null,
     decisions: {
       approve: async () => {
         sent.push("approve");
@@ -127,6 +128,14 @@ verifies("inbox.approval-card", () => {
       const { root } = openCard({ item: item as ApprovalItem });
       expect(root.textContent).not.toContain("External connector (MCP)");
       expect(root.querySelector("h2")?.textContent).toBe("Sorter wants to use publish");
+    });
+
+    it("names the subagent that asked before the agent it asked for", () => {
+      const item = { ...createNoteItem(), subagent: "checker" };
+      const { root } = openCard({ item, subagentName: "Checker" });
+      expect(root.querySelector("h2")?.textContent).toBe(
+        "Checker, for Sorter, wants to use create_note (notes-mcp)",
+      );
     });
 
     it("shows model output as text: a link, an image and a script stay as written", () => {
