@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   type ApprovedDependency,
@@ -44,8 +44,38 @@ export interface CheckContext {
   sourceFacts(file: string): SourceFacts;
 }
 
-/** Reads the repo once and returns the context every rule shares. */
-export function loadContext(root: string): CheckContext {
+/**
+ * The allow-lists and policy files a rule trusts. With a lists folder, these
+ * are read from there instead of from the checked tree, so a change can't
+ * approve itself (see `pnpm check --lists-from`).
+ */
+const listFiles: ReadonlySet<string> = new Set([
+  "tooling/check/policy.json",
+  "tooling/check/dependencies.json",
+  "tooling/check/advisories-ignored.json",
+  "tooling/check/process-starters.json",
+  "tooling/check/overrides-allowed.json",
+  "tooling/check/licences.json",
+]);
+
+/**
+ * Reads the repo once and returns the context every rule shares.
+ *
+ * @param listsRoot a checkout whose allow-lists replace the checked tree's own; a list missing there is an error, never a fall back to the tree
+ */
+export function loadContext(root: string, listsRoot?: string): CheckContext {
+  const listPath = (file: string): string => {
+    if (listsRoot === undefined || !listFiles.has(file)) {
+      return join(root, file);
+    }
+    const fromBase = join(listsRoot, file);
+    if (!existsSync(fromBase)) {
+      throw new Error(
+        `${file} is missing in the lists folder ${listsRoot}; a list is never read from the checked tree.`,
+      );
+    }
+    return fromBase;
+  };
   const policyPath = "tooling/check/policy.json";
   const dependencyListPath = "tooling/check/dependencies.json";
   const packages = listWorkspacePackages(root);
@@ -60,7 +90,7 @@ export function loadContext(root: string): CheckContext {
   const read = (file: string): string => {
     let text = texts.get(file);
     if (text === undefined) {
-      text = readFileSync(join(root, file), "utf8");
+      text = readFileSync(listPath(file), "utf8");
       texts.set(file, text);
     }
     return text;
@@ -70,11 +100,8 @@ export function loadContext(root: string): CheckContext {
     files: listRepoFiles(root),
     packages,
     packagesByName,
-    policy: parsePolicy(policyPath, readJson(join(root, policyPath))),
-    dependencyList: parseDependencyList(
-      dependencyListPath,
-      readJson(join(root, dependencyListPath)),
-    ),
+    policy: parsePolicy(policyPath, readJson(listPath(policyPath))),
+    dependencyList: parseDependencyList(dependencyListPath, readJson(listPath(dependencyListPath))),
     policyPath,
     dependencyListPath,
     placeOf: (pkg) => placeOf(pkg.directory),
