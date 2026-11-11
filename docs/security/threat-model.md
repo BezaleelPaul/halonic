@@ -431,14 +431,29 @@ routes, isn't built yet, so no app uses the host today.
   and Studio's memory. A program running as you can also change the host's
   unpacked files between launches, or the executable itself; the digest
   check finds the first only at the next launch.
-- **Halonic's data folder is denied as it was when the session opened.** The
-  `halonic-data` group lists every entry of the data folder that isn't on the
-  way to the run's own folders, once. srt can't allow a folder inside a denied
-  one, so the folders on the way stay readable, and a folder made there later
-  stays readable for the rest of the session: another run's proposal folder, a
-  later temp folder or a new agent's settings folder. **Planned** fix: one
-  folder per run in the data folder, so nothing another run makes lands on the
-  way (HAL-5644).
+- **How the `halonic-data` group keeps other runs out differs on Windows.**
+  On Linux and macOS it denies the data folder as a whole and reopens only
+  the run's own folders, so a folder another run makes there later is denied
+  too (HAL-5644). On Windows a deny on the data folder itself would also keep
+  a program from looking at the folders on the way to its own, and Node
+  can't start a script there, so the profile denies the data folder's other
+  entries by name when the session opens. What is made later is kept out by
+  the data folder's own access list: it is in the user profile, which the
+  sandbox reads only where a grant names (with `HALONIC_HOME` elsewhere,
+  that folder's access list decides). srt, though, runs every sandboxed
+  program under one account and sets its grants on the folders themselves,
+  where they win over a deny a folder inherits from a denied parent. That
+  leaves two limits on Windows (HAL-5882):
+  - **On Windows, a sandboxed run can read folders granted to any other
+    sandboxed run that is running at the same time**, whatever its profile
+    denies. Closing this needs srt to keep sessions' reads apart; until it
+    does, this limit goes in the release notes of any release that ships the
+    Windows sandbox.
+  - **On Windows, a sandboxed run can read the working and temp folders of
+    every earlier run**, because srt keeps their write grants until
+    `srt-win acl forget` removes them. Closed by HAL-5884 once merged: the
+    host forgets a session's grants when it closes, and sweeps the grants of
+    crashed runs when it starts.
 
 ### 4.7 Sandbox backends on Windows (B8)
 

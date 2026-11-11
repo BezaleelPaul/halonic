@@ -7,16 +7,18 @@
 // A program in the sandbox writes only its working folder, its temp folder
 // and its settings folder. With a proposal folder (`filesFolder`), the
 // working folder is in that folder, so the program writes nowhere in the
-// workspace. Halonic's data folder is denied, except the run's own folders
-// in it, and so are the person's keys, sign-ins and their own harness
-// settings in the home folder.
+// workspace. On Linux and macOS, Halonic's data folder is denied as a whole,
+// and the run's own folders in it are reopened, so a folder another run makes
+// there later is denied too (HAL-5644). On Windows its other entries are
+// denied by name (see `#dataDenied`). The person's keys, sign-ins and their
+// own harness settings in the home folder are denied as well.
 
 import { dirname, join } from "node:path";
 import type { HarnessAgent, HarnessProfile, HarnessProfileBuilder } from "@halonicjs/engine";
 import type { DeniedPathGroup, DeniedPathGroupCode } from "@halonicjs/events";
 import { defaultWorkingFolder, PROTECTED_TOP_NAMES } from "@halonicjs/format";
 import type { HarnessBridge, SandboxProfile } from "@halonicjs/ports";
-import { hiddenAround, homeDeniedGroups } from "./denied-groups.ts";
+import { entriesAround, homeDeniedGroups } from "./denied-groups.ts";
 import { type HarnessInstall, windowsInstallReadPaths } from "./install-folders.ts";
 import {
   isInsideOrSame,
@@ -119,30 +121,50 @@ export class HarnessProfiles implements HarnessProfileBuilder {
       ...(agent.filesFolder === null ? [] : [{ name: "proposal folder", path: root }]),
     ]);
     const installPaths = await this.#installPaths(file.install, data);
-    const readOnlyPaths = [...(await this.#definitionPaths(root)), ...installPaths];
+    const definitionPaths = await this.#definitionPaths(root);
 
-    // Only a proposal folder is kept as a whole. The workspace isn't: when it
-    // holds the data folder (a workspace in the home folder), keeping it
-    // would leave the whole data folder readable.
-    const keptRoot = agent.filesFolder === null ? [] : [root];
-    const kept = [
-      ...keptRoot,
-      workingFolder,
-      tempFolder,
-      ...(settingsFolder ? [settingsFolder] : []),
-    ];
+    // The run's own folders in the data folder. A proposal folder holds the
+    // writable working folder, and a reopened path may not hold one (on
+    // Linux srt would bind it back read-only over the working folder), so
+    // its entries around the working folder are reopened instead. Its
+    // entries are the run's own, so listing them now leaves nothing out
+    // that matters. The workspace is never reopened: when it holds the data
+    // folder (a workspace in the home folder), the whole data folder would
+    // be readable.
+    // On Windows the data folder itself isn't denied, so nothing of the run's
+    // lies in a denied path and nothing is reopened.
+    const writable = [tempFolder, ...(settingsFolder ? [settingsFolder] : [])];
+    if (agent.filesFolder !== null) writable.unshift(workingFolder);
+    const reopenedPaths =
+      this.#platform === "win32"
+        ? []
+        : [
+            ...(agent.filesFolder === null ? [] : await this.#entriesOfRoot(root, workingFolder)),
+            ...writable,
+          ];
     const deniedGroups: DeniedPathGroup[] = [
       ...(await homeDeniedGroups(this.#options.home, this.#platform, disk)),
-      { code: "halonic-data", paths: await hiddenAround(data, kept, disk) },
+      { code: "halonic-data", paths: await this.#dataDenied(data, [root, ...writable]) },
     ];
     refuseDeniedInstall(deniedGroups, installPaths);
-    refuseDeniedHolding(deniedGroups, [root, ...kept, ...readOnlyPaths]);
+    const needed = [...(agent.filesFolder === null ? [root] : []), workingFolder, ...writable];
+    refuseDeniedHolding(deniedGroups, needed, reopenedPaths);
+    // A definition path the profile denies, such as a workspace's `.halonic`
+    // that is Halonic's data folder, is left out: the deny already keeps the
+    // program from changing it, and on Windows naming it would grant reading it.
+    const readOnlyPaths = [
+      ...definitionPaths.filter(
+        (path) => deniedHolding(deniedGroups, path, reopenedPaths) === null,
+      ),
+      ...installPaths,
+    ];
     const profile: SandboxProfile = {
       workingFolder,
       tempFolder,
       settingsFolder,
       readOnlyPaths,
       deniedPaths: deniedGroups.flatMap(({ paths }) => paths),
+      reopenedPaths,
       env: { ...this.#options.env, TMPDIR: tempFolder },
       network: { bridge: bridgeAddress(bridge), allowedSites: [...file.allowedSites] },
       timeLimitMs: this.#options.timeLimitMs,
@@ -163,13 +185,54 @@ export class HarnessProfiles implements HarnessProfileBuilder {
   }
 
   /**
+   * The paths that deny Halonic's data folder. On Linux and macOS, the folder
+   * as a whole.
+   *
+   * On Windows, its entries around the run's own folders, by name. A deny on
+   * the data folder itself would also take the right to look at the folders
+   * on the way to the run's own folders, and Node looks at each of them to
+   * resolve a script's path, so no Node program could start in a run folder,
+   * the fence's own probe included. What the list doesn't name is kept out
+   * by the data folder's own access list: it is in the user profile, which
+   * the sandbox reads only where a grant names. srt keeps a write grant on
+   * each writable folder between sessions, though, and any sandboxed session
+   * may read a folder with one, so a run folder that another session makes
+   * and writes after this one opens stays readable (threat model 4.6, Known
+   * limits).
+   */
+  async #dataDenied(data: string, own: readonly string[]): Promise<string[]> {
+    if (this.#platform !== "win32") return [data];
+    return await entriesAround(data, own, this.#disk);
+  }
+
+  /**
+   * The entries of a proposal folder around its working folder, at their
+   * real places. An entry that is a link out of the folder is left out, so
+   * it stays denied with the rest of the data folder.
+   */
+  async #entriesOfRoot(root: string, workingFolder: string): Promise<string[]> {
+    const entries: string[] = [];
+    for (const entry of await entriesAround(root, [workingFolder], this.#disk)) {
+      const real = await this.#disk.realPath(entry);
+      if (isStrictlyInside(real, root) && !entries.includes(real)) entries.push(real);
+    }
+    return entries;
+  }
+
+  /**
    * A folder of the run's own, at its real place. It must be in Halonic's
    * data folder, and below one of its top-level folders: those are shared,
    * so a temp folder that is `runs/` itself would leave every run's files
    * writable (HAL-5675).
    */
   async #ownFolder(name: string, path: string, data: string): Promise<string> {
-    const real = await this.#disk.realPath(path);
+    let real: string;
+    try {
+      real = await this.#disk.realPath(path);
+    } catch (error) {
+      // The sandbox reopens it when the session opens, so it must be there before.
+      throw new Error(`The ${name} ${path} isn't there.`, { cause: error });
+    }
     if (!isStrictlyInside(real, data)) {
       throw new Error(`The ${name} ${real} must be in Halonic's data folder ${data}.`);
     }
@@ -265,15 +328,31 @@ function installExample(code: DeniedPathGroupCode): string {
  * needs, such as a workspace inside `~/.config/gcloud`: the fence would
  * deny it, and the run couldn't work.
  */
-function refuseDeniedHolding(groups: readonly DeniedPathGroup[], needed: readonly string[]): void {
-  for (const { code, paths } of groups) {
-    for (const denied of paths) {
-      const held = needed.find((path) => isInsideOrSame(path, denied));
-      if (held !== undefined) {
-        throw new Error(`${held} is in ${denied}, which the sandbox denies (${code}).`);
-      }
+function refuseDeniedHolding(
+  groups: readonly DeniedPathGroup[],
+  needed: readonly string[],
+  reopened: readonly string[],
+): void {
+  for (const path of needed) {
+    const held = deniedHolding(groups, path, reopened);
+    if (held !== null) {
+      throw new Error(`${path} is in ${held.denied}, which the sandbox denies (${held.code}).`);
     }
   }
+}
+
+/** The denied path that hides `path`, with its group; `null` when none does, or a reopened path holds it. */
+function deniedHolding(
+  groups: readonly DeniedPathGroup[],
+  path: string,
+  reopened: readonly string[],
+): { denied: string; code: DeniedPathGroup["code"] } | null {
+  if (reopened.some((open) => isInsideOrSame(path, open))) return null;
+  for (const { code, paths } of groups) {
+    const denied = paths.find((deniedPath) => isInsideOrSame(path, deniedPath));
+    if (denied !== undefined) return { denied, code };
+  }
+  return null;
 }
 
 /** The bridge's loopback host and port, from its address. */
