@@ -202,3 +202,11 @@ verifies("shell.palette-options", () => {
     });
   });
 });
+
+verifies("shell.command-sources", () => {
+  it("names an action with its source after its title", () => {
+    expect(paletteOptionName({ ...newTab, source: "Weather plugin" }, kindNames)).toBe(
+      "New tab, Weather plugin",
+    );
+  });
+});

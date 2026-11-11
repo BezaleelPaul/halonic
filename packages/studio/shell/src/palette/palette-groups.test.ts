@@ -172,3 +172,22 @@ verifies("shell.palette-groups", () => {
     expect(palette({})).toEqual({ groups: [], nothingFound: false, couldNotSearch: false });
   });
 });
+
+verifies("shell.command-sources", () => {
+  it("keeps an action's source on its row", () => {
+    const content = palette({
+      words: "forecast",
+      actions: [
+        {
+          id: "plugins.commands.weather.forecast",
+          title: "Show forecast",
+          source: "Weather plugin",
+        },
+      ],
+    });
+    expect(content.groups[0]?.rows[0]).toMatchObject({
+      label: "Show forecast",
+      source: "Weather plugin",
+    });
+  });
+});
