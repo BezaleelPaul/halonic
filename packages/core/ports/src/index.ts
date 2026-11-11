@@ -40,6 +40,7 @@ export {
   type ConnectorTool,
   type ConnectorTransport,
   connectorClientVersion,
+  passesNameRule,
   type ToolRisk,
   type TrustGrant,
 } from "./connector-client.ts";

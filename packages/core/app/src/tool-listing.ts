@@ -2,6 +2,7 @@
 // model and the refusals shown in the workspace's integration status, as
 // `ports.untrusted-tool-listings` asks.
 
+import { type Connector, marksRead } from "@halonicjs/format";
 import type { ConnectorTool, IntegrationTool, ToolRisk, TrustGrant } from "@halonicjs/ports";
 import { readListedTool } from "./listed-tool.ts";
 import {
@@ -45,9 +46,27 @@ export interface ToolListingInput {
   readonly trust: TrustGrant | null;
   /**
    * The risk the workspace sets for a listed tool, by the name the server
-   * lists it under, without the source's id. Used only with a grant.
+   * lists it under, without the source's id. Used only with a grant. Build
+   * it from the connector's file with {@link workspaceRisksOf}.
    */
   readonly workspaceRisks?: ReadonlyMap<string, ToolRisk>;
+}
+
+/**
+ * The risks a connector's file sets for its tools: `read` for each tool its
+ * `tools.read` list marks (`marksRead`, so not one `approve` names). Only
+ * the file, which a person wrote, is read: nothing a server lists can add
+ * a tool here.
+ *
+ * @example
+ * workspaceRisksOf({ approve: [], read: ["search_issues"] });
+ * // Map { "search_issues" => "read" }
+ */
+export function workspaceRisksOf(
+  tools: Pick<Connector["tools"], "approve" | "read">,
+): ReadonlyMap<string, ToolRisk> {
+  const marked = (tools.read ?? []).filter((name) => marksRead(tools, name));
+  return new Map(marked.map((name) => [name, "read"]));
 }
 
 /** A tool to offer the model. */
@@ -242,7 +261,7 @@ function offerListed(
     listedName: reading.name,
     description: reading.description,
     parameters: reading.parameters,
-    risk: listedRisk(reading.name, input),
+    risk: listedRisk(entry, reading.name, input),
     untrusted: true,
   };
 }
@@ -259,8 +278,19 @@ export function listedToolName(source: string, listedName: string): string {
   return `${source}__${listedName}`;
 }
 
-/** A listed tool is `write`, unless a trusted workspace sets another risk for it. */
-function listedRisk(name: string, input: ToolListingInput): ToolRisk {
+/**
+ * A listed tool is `write`, or `send` when its listing says so, the same as
+ * the engine's `countedRisk`. A trusted workspace can set another risk for a
+ * `write` tool, but never for a `send` one: a server can raise its tool's
+ * risk, and the workspace's `read` list can't lower `send`.
+ *
+ * @param entry - as the source returned it; its `risk` may hold anything
+ */
+function listedRisk(entry: ConnectorTool, name: string, input: ToolListingInput): ToolRisk {
+  const { risk }: Record<string, unknown> = { ...entry };
+  if (risk === "send") {
+    return "send";
+  }
   if (input.trust === null) {
     return "write";
   }

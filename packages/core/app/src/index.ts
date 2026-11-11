@@ -423,6 +423,7 @@ export {
   type ToolListing,
   type ToolListingInput,
   type ToolRefusal,
+  workspaceRisksOf,
 } from "./tool-listing.ts";
 export type {
   PersonTrustOrigin,
