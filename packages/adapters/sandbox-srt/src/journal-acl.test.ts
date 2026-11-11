@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { restrictToThisUser } from "./journal-acl.ts";
 
 describe("restrictToThisUser", () => {
-  it("removes inheritance and grants only the current user's SID", async () => {
+  it("takes the ownership, removes inheritance and grants only the current user's SID", async () => {
     const calls: { file: string; args: string[] }[] = [];
     await restrictToThisUser("journals\\sandbox-journals", async (file, args) => {
       calls.push({ file, args });
@@ -10,6 +10,10 @@ describe("restrictToThisUser", () => {
     });
     expect(calls).toEqual([
       { file: "whoami.exe", args: ["/user", "/fo", "csv", "/nh"] },
+      {
+        file: "icacls.exe",
+        args: ["journals\\sandbox-journals", "/setowner", "*S-1-5-21-1-2-3-1001"],
+      },
       {
         file: "icacls.exe",
         args: [
