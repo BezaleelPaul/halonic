@@ -6,9 +6,9 @@ import { exitCode } from "../../exit-code.ts";
 import { runCli } from "../../run-cli.ts";
 import {
   type AcmeRuns,
+  acmeRunsSetup,
   done,
   makeAcmeRuns,
-  now,
   removeAcmeRuns,
   running,
   type StoredRun,
@@ -24,8 +24,7 @@ let acmeRuns: AcmeRuns;
 let folder: string;
 let acme: string;
 
-const runsCommand = () =>
-  runsCommandWith({ clock: () => ({ now, timeZone: "UTC" }), profile: acmeRuns.profile });
+const runsCommand = () => runsCommandWith(acmeRunsSetup(acmeRuns));
 
 beforeEach(async () => {
   acmeRuns = await makeAcmeRuns("runs-list");

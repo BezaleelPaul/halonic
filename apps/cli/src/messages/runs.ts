@@ -1,7 +1,7 @@
 import type { Mark } from "../output/paint.ts";
 import { countInWords, listInWords } from "./counts.ts";
 import { defineMessages } from "./define.ts";
-import { dim, markPart, phrase } from "./phrase.ts";
+import { markPart, phrase } from "./phrase.ts";
 import { runMessages } from "./run.ts";
 import { happenedInWords, type StartedAt } from "./runs-list.ts";
 import { suggestedCommand } from "./suggested-command.ts";
@@ -46,6 +46,8 @@ export const runsMessages = defineMessages("runs", {
   showSummary: () => phrase`Show what one run did`,
   /** What `runs show` was doing, for "✕ Couldn't show run 01JD8Q: there's no workspace.yaml here.". */
   showAction: (runId: string) => phrase`show run ${runId}`,
+  /** `send`'s line in `halonic runs --help`, from the words of {@link summary}. */
+  sendSummary: () => phrase`Answer a run that's waiting for you`,
   /** What `runs send` was doing, for "✕ Couldn't send approve to run 01JD8Q: …". */
   sendAction: (event: string, runId: string) => phrase`send ${event} to run ${runId}`,
   /** The same, when there's no such run: "✕ Couldn't send approve: …". */
@@ -53,10 +55,6 @@ export const runsMessages = defineMessages("runs", {
 
   sent: (event: string, runId: string, title: string) =>
     phrase`Sent ${event} to run ${runId}. ${title} goes on.`,
-  /** Indented and dimmed under {@link sent}. */
-  followIt: (runId: string, dir?: string) => [
-    dim(`Follow it: ${suggestedCommand("runs show", dir, runId)}`),
-  ],
   /**
    * A Try it or Test run that ended at steps it couldn't try, because they
    * need changes left out of it (HAL-4285): "! Support reply couldn't try everything."
@@ -170,6 +168,15 @@ export const runsMessages = defineMessages("runs", {
     given.length === 0
       ? phrase`halonic runs show needs a run id.`
       : phrase`halonic runs show takes one run id, and you gave ${countInWords(given.length)}: ${given.join(", ")}.`,
+  /**
+   * `runs send` without its run id and event, or with more (usage, exit 2);
+   * the usage line is line 2. The shape of {@link showTakesOneRunId}; team
+   * wording on HAL-2742, as HAL-2282 allows.
+   */
+  sendTakesRunIdAndEvent: (given: readonly string[]) =>
+    given.length < 2
+      ? phrase`halonic runs send needs a run id and an event.`
+      : phrase`halonic runs send takes a run id and an event, and you gave ${countInWords(given.length)}: ${given.join(", ")}.`,
 });
 
 function notWaitingInWords(why: NotWaiting): string {
