@@ -18,6 +18,7 @@
     "@halonicjs/adapter-coordination-node": "workspace:*",
     "@halonicjs/adapter-env-secrets": "workspace:*",
     "@halonicjs/adapter-fs-node": "workspace:*",
+    "@halonicjs/adapter-git": "workspace:*",
     "@halonicjs/adapter-harness-claude-code": "workspace:*",
     "@halonicjs/adapter-harness-codex": "workspace:*",
     "@halonicjs/adapter-http-kit": "workspace:*",

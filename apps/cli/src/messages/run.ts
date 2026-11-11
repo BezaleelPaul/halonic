@@ -47,6 +47,24 @@ export const runMessages = defineMessages("run", {
   action: (workflow: string) => phrase`run ${workflow}`,
   /** The end of line 1 when `run` was refused before its first step. */
   nothingRan: () => nothingRan,
+  /**
+   * Line 1 when the workspace has history but no version yet, so no
+   * workflow is live (Sofia, HAL-4850): `conflict`, exit 5.
+   */
+  nothingLive: () => phrase`Nothing is live yet, so there is nothing to run. ${nothingRan}`,
+  /** Its fix. The CLI has no make-live command yet; once it has, this names it. */
+  nothingLiveFix: () => phrase`Make the workspace live in the Studio, then run again.`,
+  /**
+   * The reason after "Couldn't run support-reply:" when the workspace is a
+   * git folder but git can't start, so the live version can't be read:
+   * `unavailable`, exit 9. As the sandbox's refusal, it ends with "Nothing
+   * ran.", or `runs send`'s "Nothing was sent.". Git's own reason shows with
+   * `--debug`.
+   */
+  gitWontStart: (nothingDone: Phrase = nothingRan) =>
+    phrase`git can't start on this computer, so the live version can't be read. ${nothingDone}`,
+  /** Its fix. */
+  gitWontStartFix: () => phrase`Install git and make sure it's on your PATH, then try again.`,
   /** `--input`'s line in the help. */
   inputOption: () => phrase`The run's input: a JSON file, or the JSON itself.`,
   /** `--event`'s line in the help. */
