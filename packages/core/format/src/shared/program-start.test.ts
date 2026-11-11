@@ -66,12 +66,32 @@ verifies("format.program-start-paths", () => {
     it.each([
       ["after -m", ["-m", "tools.mail"]],
       ["written with -m", ["-mtools.mail"]],
+      ["after -m among short flags", ["-Im", "tools.mail"]],
+      ["written with -m among short flags", ["-Imtools.mail"]],
+      ["after -m among short flags with an -O", ["-OIm", "tools.mail"]],
+      ["written with -m after a group of short flags ending in m", ["-Wm", "-mtools.mail"]],
     ])("reads the folder path of a module %s", (_, args) => {
       expect(pathsOf(start("python", args))).toContain("tools/mail");
     });
 
     it("reads no module from a lone -m", () => {
       expect(pathsOf(start("python", ["-m"]))).toEqual(["python", "-m"]);
+    });
+
+    it("reads no module after short flags without an m, or after a long flag", () => {
+      expect(pathsOf(start("python", ["-I", "tools.mail"]))).not.toContain("tools/mail");
+      expect(pathsOf(start("python", ["--mode", "tools.mail"]))).not.toContain("tools/mail");
+    });
+
+    it.each([
+      ["in double quotes", '--require "tools/x.js"', "tools/x.js"],
+      ["in single quotes", "--require 'tools/x.js'", "tools/x.js"],
+      ["in quotes after an =", '--file="tools/x.js"', "tools/x.js"],
+      ["in quotes with a space", '--require "my tools/x.js"', "my tools/x.js"],
+      ["in quotes behind a short flag", '-c"tools/x.js"', "tools/x.js"],
+      ["in double quotes after a stray apostrophe", `it's --require "my x.js" '`, "my x.js"],
+    ])("reads a path %s without its quotes (HAL-4903)", (_, arg, path) => {
+      expect(pathsOf(start("node", [arg]))).toContain(path);
     });
 
     it("reads the paths in env values, shown with their names", () => {
