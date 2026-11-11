@@ -52,6 +52,10 @@ checks pass only on an explicit `blocked:` answer; a crash, empty output or any 
 `INCONCLUSIVE`, not a pass. It writes
 `windows-isolation-results.json`; it doesn't gate a merge.
 
+The same workflow runs `scripts/windows-wsl-probe.mjs`. It checks whether srt's sandbox account can register and start a WSL distro of
+its own (and, if it can, whether that distro reads a denied file or reaches a blocked port), and
+whether WSL 2 starts on the runner at all. It writes `windows-wsl-results.json`.
+
 ## Exports
 
 | Export | What it is |
