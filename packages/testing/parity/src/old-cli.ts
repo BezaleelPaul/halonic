@@ -1,9 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, relative, sep } from "node:path";
 import type { CliCall } from "./cli-calls.ts";
-import { fixedTestTime, oldEnvironment, oldTsx } from "./old-repo.ts";
+import { fixedTestTime, oldEnvironment, runOldTsx } from "./old-repo.ts";
 import type { OldCliRun } from "./recording.ts";
 
 /** Every file under a folder, relative to it, sorted. */
@@ -13,7 +11,7 @@ function filesUnder(dir: string): string[] {
   }
   return readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
-    .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"))
     .sort();
 }
 
@@ -29,17 +27,14 @@ function runOnce(oldRoot: string, home: string, dir: string, call: CliCall): Old
   cpSync(dir, copy, { recursive: true });
   const root = realpathSync(copy);
   try {
-    const preload = fileURLToPath(new URL("./old-cli-preload.ts", import.meta.url));
+    // A file URL, because Node on Windows takes no drive path after --import.
+    const preload = new URL("./old-cli-preload.ts", import.meta.url).href;
     const args = call.args.map((arg) => (arg === "<workspace>" ? root : arg));
-    const result = spawnSync(
-      oldTsx(oldRoot),
-      ["--import", preload, "apps/cli/src/main.ts", ...args],
-      {
-        cwd: oldRoot,
-        encoding: "utf8",
-        env: { ...oldEnvironment(home), PARITY_FIXED_TIME: fixedTestTime },
-      },
-    );
+    const result = runOldTsx(oldRoot, ["--import", preload, "apps/cli/src/main.ts", ...args], {
+      cwd: oldRoot,
+      encoding: "utf8",
+      env: { ...oldEnvironment(home), PARITY_FIXED_TIME: fixedTestTime },
+    });
     const runsDir = join(root, ".studio", "runs");
     const runs = filesUnder(runsDir)
       .filter((file) => file.endsWith(".jsonl"))

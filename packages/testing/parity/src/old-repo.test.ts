@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { basename } from "node:path";
 import { verifies } from "@halonicjs/testing-spec";
 import { afterEach, expect, it, vi } from "vitest";
-import { cloneProblems, oldEnvironment } from "./old-repo.ts";
+import { cloneProblems, oldEnvironment, oldTsx } from "./old-repo.ts";
 import { TestFolders } from "./test-folders.ts";
 
 // The tests start git and Node processes, which can take longer than 5 s on a busy machine.
@@ -31,7 +32,7 @@ function clone(withTsx: boolean): { folder: string; head: string } {
   git(folder, "init", "-q");
   folders.write(folder, { "a.txt": "a\n", ".gitignore": "node_modules\n" });
   if (withTsx) {
-    folders.write(folder, { "node_modules/.bin/tsx": "" });
+    folders.write(folder, { [`node_modules/.bin/${basename(oldTsx(folder))}`]: "" });
   }
   git(folder, "add", ".");
   git(folder, "commit", "-q", "-m", "one");
@@ -63,8 +64,12 @@ verifies("parity.record-only-from-reference", () => {
     vi.stubEnv("ACME_SECRET", "not for the old code");
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("LD_LIBRARY_PATH", "/opt/libs");
+    for (const name of ["SystemRoot", "ComSpec", "PATHEXT"]) {
+      vi.stubEnv(name, undefined);
+    }
     expect(oldEnvironment("/empty/home")).toEqual({
       HOME: "/empty/home",
+      USERPROFILE: "/empty/home",
       TZ: "UTC",
       LANG: "C",
       NO_COLOR: "1",
@@ -73,5 +78,7 @@ verifies("parity.record-only-from-reference", () => {
     });
     vi.stubEnv("LD_LIBRARY_PATH", undefined);
     expect(Object.keys(oldEnvironment("/h"))).not.toContain("LD_LIBRARY_PATH");
+    vi.stubEnv("SystemRoot", "the system folder");
+    expect(oldEnvironment("/h")["SystemRoot"]).toBe("the system folder");
   });
 });
