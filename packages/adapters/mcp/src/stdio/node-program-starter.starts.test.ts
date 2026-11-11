@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { skillScriptsRefusal } from "@halonicjs/format";
@@ -112,6 +112,91 @@ verifies("mcp.program-starter", () => {
         expect(await stopProgram(program, 5000)).toEqual({ code: 0, signal: null });
       },
     );
+  });
+
+  describe("refusing a harness agent's working folder", () => {
+    /** `launch` with the working folder `files/agents/coder` of the workspace `folder`. */
+    async function guarded(launch: ProgramLaunch): Promise<ProgramLaunch> {
+      const coder = join(folder, "files/agents/coder");
+      await mkdir(coder, { recursive: true });
+      return { ...launch, workingFolders: { workspaceRoot: folder, folders: [coder] } };
+    }
+
+    it("refuses an argument that links into a working folder, before anything starts", async () => {
+      const launch = await guarded({ ...node(""), args: [join(folder, "tools/run.js")] });
+      await writeFile(join(folder, "files/agents/coder/run.js"), "");
+      await mkdir(join(folder, "tools"));
+      await symlink(join(folder, "files/agents/coder/run.js"), join(folder, "tools/run.js"));
+      await expect(nodeProgramStarter.start(launch)).rejects.toThrow("in the agent working folder");
+    });
+
+    it("refuses a package in node_modules that links into a working folder", async () => {
+      const launch = await guarded(node("process.exit(0)"));
+      await mkdir(join(folder, "node_modules"));
+      await symlink(join(folder, "files/agents/coder"), join(folder, "node_modules/mail-mcp"));
+      // The check lists node_modules on the real path, so on Windows the
+      // message names the long form of a short temp folder such as RUNNER~1.
+      const realFolder = await realpath(folder);
+      await expect(nodeProgramStarter.start(launch)).rejects.toThrow(
+        "loads '" + join(realFolder, "node_modules/mail-mcp") + "'",
+      );
+    });
+
+    it("refuses a bare name found in a working folder on the PATH", async () => {
+      const fileName = process.platform === "win32" ? "acme-server.exe" : "acme-server";
+      const coder = join(folder, "files/agents/coder");
+      const launch = await guarded({
+        ...node(""),
+        program: "acme-server",
+        args: [],
+        env: { PATH: join(folder, "bin") },
+      });
+      // The PATH entry is a link, so only its real path shows the working folder.
+      await symlink(coder, join(folder, "bin"), "dir");
+      await writeFile(join(coder, fileName), "#!/bin/sh\n");
+      await chmod(join(coder, fileName), 0o755);
+      await expect(nodeProgramStarter.start(launch)).rejects.toThrow("in the agent working folder");
+    });
+
+    it("refuses a program on the PATH that links into a working folder, from a plain PATH folder", async () => {
+      const fileName = process.platform === "win32" ? "acme-server.exe" : "acme-server";
+      const coder = join(folder, "files/agents/coder");
+      const launch = await guarded({
+        ...node(""),
+        program: "acme-server",
+        args: [],
+        env: { PATH: join(folder, "bin") },
+      });
+      // Neither the PATH folder nor the name shows the working folder: only the
+      // program found there does, so the check on the found program refuses it.
+      await mkdir(join(folder, "bin"));
+      await writeFile(join(coder, fileName), "#!/bin/sh\n");
+      await chmod(join(coder, fileName), 0o755);
+      await symlink(join(coder, fileName), join(folder, "bin", fileName));
+      await expect(nodeProgramStarter.start(launch)).rejects.toThrow("in the agent working folder");
+    });
+
+    it("refuses a value the connector file writes that names a working folder", async () => {
+      const authored = { NODE_OPTIONS: `--require ${join(folder, "files/agents/coder/hook.js")}` };
+      const launch = await guarded({ ...node("", authored), checkedEnv: authored });
+      await expect(nodeProgramStarter.start(launch)).rejects.toThrow("in the agent working folder");
+    });
+
+    it.each([
+      ["an inherited PATH entry", "PATH"],
+      ["a secret value", "ACME_TOKEN"],
+    ])("starts with %s in a working folder, as only checkedEnv is read", async (_, name) => {
+      const coder = join(folder, "files/agents/coder");
+      const env = { [name]: [coder, dirname(process.execPath)].join(delimiter) };
+      const program = await nodeProgramStarter.start(await guarded(node("process.exit(0)", env)));
+      expect(await stopProgram(program, 5000)).toEqual({ code: 0, signal: null });
+    });
+
+    it("starts a program that reaches no working folder", async () => {
+      const launch = await guarded(node("process.exit(0)"));
+      const program = await nodeProgramStarter.start(launch);
+      expect(await stopProgram(program, 5000)).toEqual({ code: 0, signal: null });
+    });
   });
 
   describe("a started program", () => {
