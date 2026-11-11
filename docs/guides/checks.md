@@ -399,9 +399,7 @@ an error.
 ## Package names and layers
 
 A package's layer and npm name follow from its folder, so nobody has to
-invent a name. A package staged for npm (`halonic.publish`) is the one
-exception: its workspace name is its published name, in the `@halonicjs`
-scope, so the two never differ:
+invent a name:
 
 | Folder                            | Layer    | Name                                  |
 | --------------------------------- | -------- | ------------------------------------- |
@@ -462,10 +460,22 @@ change, so it needs Liam's review.
 
 `published` in `policy.json` lists every package that reaches npm. The CLI
 `halonic` is published as it is. A package with `halonic.publish` in its
-`package.json` stays `private` in the workspace, and
-[tooling/publish](../../tooling/publish/README.md) stages the copy that
-goes to npm; such a package must be listed too, or `packages` fails. Adding
-a name needs Liam's review.
+`package.json` stays `private` in the workspace and becomes one subpath of
+its layer's npm package, such as `@halonicjs/adapters/integration-kit`;
+[tooling/publish](../../tooling/publish/README.md) stages that package.
+Such a package must be listed too, or `packages` fails. Its
+`halonic.publish.name` must be the layer package with the folder as
+subpath (`packages/adapters/integration-kit` gives
+`@halonicjs/adapters/integration-kit`), or the bare layer package for the
+layer's main entry; `packages` fails otherwise. Adding a name needs Liam's
+review.
+
+CI stages every layer package in the tests of `tooling/publish`. Its
+`turbo.json` adds the sources of all workspace packages to that task's
+inputs, so a change to a published package, or to code it bundles, reruns
+the staging tests instead of taking them from the cache. An undeclared
+import or an import from inside another layer's entry fails that pull
+request, not the publish run.
 
 ## Ignoring an advisory
 

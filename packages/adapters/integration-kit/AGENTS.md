@@ -1,4 +1,4 @@
-# @halonicjs/integration-kit
+# @halonicjs/adapter-integration-kit
 
 Owner: liam · Layer: adapters · Read the root `AGENTS.md` first; this file adds local rules.
 
@@ -8,13 +8,13 @@ The integration interface: the IntegrationHost an integration gets, with an Http
 
 This package may change only through tasks that name it. Its public API is the `exports` map in `package.json`:
 `src/index.ts` (the host side) and `src/integration/index.ts` (the integration entry, published as
-`@halonicjs/integration-kit`); everything else is internal.
+`@halonicjs/adapters/integration-kit`); everything else is internal.
 
 ## Commands
 
 | Command                                                                                  | What it does                                                               |
 | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `pnpm exec turbo run test --filter=@halonicjs/integration-kit -- --maxWorkers=2` | runs this package's tests (and the codegen they need)                      |
+| `pnpm exec turbo run test --filter=@halonicjs/adapter-integration-kit -- --maxWorkers=2` | runs this package's tests (and the codegen they need)                      |
 | `pnpm exec turbo run lint --filter=...[origin/main] --concurrency=2`                     | lints the packages your change touches and the ones that depend on them    |
 | `pnpm exec turbo run test --filter=...[origin/main] --concurrency=2 -- --maxWorkers=2`   | tests the packages your change touches and the ones that depend on them    |
 | `pnpm exec turbo run typecheck --concurrency=2`                                          | typechecks all packages (HAL-2950); unchanged ones come from Turbo's cache |

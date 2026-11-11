@@ -17,8 +17,7 @@ import { namesTestFile, namesToolConfig } from "../lib/source-files.ts";
 import type { WorkspacePackage } from "../lib/workspace.ts";
 
 /**
- * Checks each package's `package.json`: its name follows from its folder
- * (a package staged for npm has its published name instead),
+ * Checks each package's `package.json`: its name follows from its folder,
  * it is private unless listed as published, it declares its layer, owner
  * and coverage floor, its tests run through the shared Vitest preset with
  * coverage on, it exposes only public entry points, and every
@@ -64,37 +63,37 @@ function checkIdentity(context: CheckContext, pkg: WorkspacePackage, report: Rep
     );
   }
   checkRuntime(pkg, place.layer, report);
-  const publishedName = pkg.manifest.halonic?.publish?.name;
-  if (publishedName !== undefined) {
-    checkPublishedName(pkg, publishedName, report);
-  } else if (name !== place.expectedName) {
+  if (name !== place.expectedName) {
     report.error(
       file,
       `The name must be "${place.expectedName}" (it follows from the folder), not "${name ?? "(missing)"}".`,
     );
   }
   checkPublication(context, pkg, report);
+  checkPublishedName(pkg, place.layer, folder, report);
   checkDeclaration(pkg, place.layer, report);
 }
 
 /**
- * A package staged for npm has the name it is published under in the
- * workspace too, so nobody has to map one name onto the other. It stays in
- * our scope, and only listed packages may be staged (`checkPublication`).
+ * npm gets one package per layer (HAL-5149), and each published package is
+ * one subpath of it named after its folder: `packages/adapters/integration-kit`
+ * is published as `@halonicjs/adapters/integration-kit`. Only a layer's main
+ * entry may take the bare layer package name.
  */
-function checkPublishedName(pkg: WorkspacePackage, publishedName: string, report: Report): void {
-  const file = pkg.manifestPath;
-  const { name } = pkg.manifest;
-  if (!publishedName.startsWith(`${scope}/`)) {
+function checkPublishedName(
+  pkg: WorkspacePackage,
+  layer: Layer,
+  folder: string,
+  report: Report,
+): void {
+  const publishedName = pkg.manifest.halonic?.publish?.name;
+  if (publishedName === undefined) return;
+  const layerPackage = `${scope}/${layer}`;
+  const subpath = `${layerPackage}/${folder}`;
+  if (publishedName !== subpath && publishedName !== layerPackage) {
     report.error(
-      file,
-      `"halonic.publish.name" must be in the ${scope} scope, not "${publishedName}".`,
-    );
-  }
-  if (name !== publishedName) {
-    report.error(
-      file,
-      `The name must be "${publishedName}", the name it is published under ("halonic.publish.name"), not "${name ?? "(missing)"}".`,
+      pkg.manifestPath,
+      `"halonic.publish.name" must be "${subpath}" (the layer package with the folder as subpath) or "${layerPackage}" (the layer's main entry), not "${publishedName}".`,
     );
   }
 }

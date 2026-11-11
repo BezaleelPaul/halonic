@@ -68,7 +68,7 @@ describe("tooling/check: packages", () => {
         layer: "core",
         owner: "liam",
         coverage: defaultCoverageFloors.core,
-        publish: { name: "@halonicjs/std" },
+        publish: { name: "@halonicjs/core/std" },
       },
     });
     const notListed = messages([staged], { coreOrder: ["@halonicjs/std"] });
@@ -80,47 +80,30 @@ describe("tooling/check: packages", () => {
     expect(listed).toEqual([]);
   });
 
-  it("names a package staged for npm after its published name, not its folder", () => {
-    const kit: FixturePackage = {
-      directory: "packages/core/std",
-      manifest: manifestFor("@halonicjs/kit", "core", {
-        private: true,
-        halonic: {
-          layer: "core",
-          owner: "liam",
-          coverage: defaultCoverageFloors.core,
-          publish: { name: "@halonicjs/kit" },
+  it("publishes a package as its folder's subpath of the layer package, or as the layer's main entry", () => {
+    const publishedAs = (name: string) =>
+      messages(
+        [
+          stdWith({
+            private: true,
+            halonic: {
+              layer: "core",
+              owner: "liam",
+              coverage: defaultCoverageFloors.core,
+              publish: { name },
+            },
+          }),
+        ],
+        {
+          coreOrder: ["@halonicjs/std"],
+          policy: (policy) => ({ ...policy, published: ["@halonicjs/std"] }),
         },
-      }),
-    };
-    const options = {
-      coreOrder: ["@halonicjs/kit"],
-      policy: (policy: Record<string, unknown>) => ({ ...policy, published: ["@halonicjs/kit"] }),
-    };
-    expect(messages([kit], options)).toEqual([]);
-    const folderName = { ...kit, manifest: { ...kit.manifest, name: "@halonicjs/std" } };
-    expect(messages([folderName], { ...options, coreOrder: ["@halonicjs/std"] })).toContain(
-      'The name must be "@halonicjs/kit", the name it is published under ("halonic.publish.name"), not "@halonicjs/std".',
-    );
-  });
-
-  it("keeps a published name in our scope", () => {
-    const outside = stdWith({
-      name: "left-pad",
-      private: true,
-      halonic: {
-        layer: "core",
-        owner: "liam",
-        coverage: defaultCoverageFloors.core,
-        publish: { name: "left-pad" },
-      },
-    });
-    expect(
-      messages([outside], {
-        coreOrder: ["left-pad"],
-        policy: (policy) => ({ ...policy, published: ["left-pad"] }),
-      }),
-    ).toContain('"halonic.publish.name" must be in the @halonicjs scope, not "left-pad".');
+      );
+    expect(publishedAs("@halonicjs/core")).toEqual([]);
+    expect(publishedAs("@halonicjs/std")).toEqual([
+      '"halonic.publish.name" must be "@halonicjs/core/std" (the layer package with the folder as subpath) or "@halonicjs/core" (the layer\'s main entry), not "@halonicjs/std".',
+    ]);
+    expect(publishedAs("@halonicjs/core/stdlib")).toHaveLength(1);
   });
 
   it("flags a package outside the package folders", () => {
