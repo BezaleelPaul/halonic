@@ -25,7 +25,12 @@ import {
   type SandboxGateHost,
   sandboxGateMachine,
 } from "./sandbox-gate-machine.ts";
-import { retriedLine, type StuckTimerWatch, stuckTimerWatch } from "./stuck-timers.ts";
+import {
+  retriedLine,
+  type StuckTimer,
+  type StuckTimerWatch,
+  stuckTimerWatch,
+} from "./stuck-timers.ts";
 import type { OpenWorkspaceDir } from "./workspace-dir.ts";
 
 /** What opening a workspace's engine uses on this computer, so tests can fix it. */
@@ -54,16 +59,26 @@ export interface WorkspaceEngineTarget {
   readonly ending: Message;
   /** The routine scheduler on the engine's tick, for `routines watch`; none for a single run. */
   readonly routines?: (engine: RoutineEngine) => RoutineTicks;
+  /**
+   * Hears a run whose step keeps failing, for `routines watch`, which
+   * reports it and keeps watching. Left out, as for `run` and `runs send`,
+   * such a run stops the command with the step's error.
+   */
+  readonly onStuck?: (stuck: StuckTimer) => void;
 }
 
 /** A workspace's engine, open until {@link LocalEngine.close}, with the signal to follow its runs with. */
 export interface WorkspaceEngine extends LocalEngine {
   /**
-   * Aborted at Ctrl C or SIGTERM, or when a run's step keeps failing. Pass
-   * it to `WorkflowRuns`, and wrap the follow in `followUntilStopped`.
+   * Aborted at Ctrl C or SIGTERM, or as {@link stuck} is. Pass it to
+   * `WorkflowRuns`, and wrap the follow in `followUntilStopped`.
    */
   readonly signal: AbortSignal;
-  /** Aborted, with the step's last error as its reason, when a run's step keeps failing. */
+  /**
+   * Aborted, with the last error as its reason, when a run's step keeps
+   * failing, or three ticks or wake-ups in a row fail. With `onStuck`, a
+   * step that keeps failing goes there instead and doesn't abort it.
+   */
   readonly stuck: AbortSignal;
   /** The runs' agents set to "On this computer", each once, for the ! lines before they start. */
   readonly unsandboxed: readonly UnsandboxedAgent[];
@@ -99,13 +114,14 @@ export async function openWorkspaceEngine(
       unsandboxed.set(agent.name, agent);
     }
   }
-  const stuck = stuckTimerWatch((failure) => context.debug(retriedLine(failure)));
+  const stuck = stuckTimerWatch((failure) => context.debug(retriedLine(failure)), target.onStuck);
   const engine = await openLocalEngine({
     workspace: target.workspace,
     workspaceRoot: target.dir.root,
     secrets: context.secrets,
     http: setup.http,
-    // The scheduler retries a failed step; one that keeps failing stops the command with its error.
+    // The scheduler retries a failed step; one that keeps failing stops the command with its
+    // error, or goes to `onStuck`.
     reportError: stuck.report,
     // Only failed wake-ups in a row count, as for ticks (HAL-5164).
     onWokeUp: () => stuck.succeeded("wake-up"),
