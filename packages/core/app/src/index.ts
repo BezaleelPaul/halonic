@@ -285,7 +285,8 @@ export {
   shortRunId,
   shortRunIdLength,
 } from "./run-history.ts";
-export type { PartlyDecided, ProposedRecord } from "./run-proposal-record.ts";
+export type { PartlyDecided, ProposedRecord, Settled } from "./run-proposal-record.ts";
+export { isProposalFinished, type SettleResult } from "./run-proposal-settle.ts";
 export type {
   AcceptResult,
   CompareTexts,
