@@ -92,10 +92,13 @@ export {
 export { CommandPalette, type CommandPaletteProps } from "./palette/command-palette.tsx";
 export {
   compareNameMatches,
+  findWords,
   matchName,
   type NameMatch,
   type NameMatchRank,
   nameMatchRanks,
+  type WordsFound,
+  type WordsOptions,
 } from "./palette/name-match.ts";
 export {
   itemLocationKey,
@@ -253,6 +256,15 @@ export {
   SaveState,
   type SavingItem,
 } from "./save/save-state.ts";
+export {
+  type NameResult,
+  type SearchPageNames,
+  type SearchPageQuery,
+  type SearchScope,
+  searchPageLocation,
+  searchPageNames,
+  searchPageWords,
+} from "./search/search-page-names.ts";
 export type {
   FeatureServices,
   ServiceFactory,
