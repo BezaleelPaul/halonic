@@ -58,22 +58,22 @@ Every refusal comes before the path is looked at, so a caller without the token 
 
 A request body is JSON of at most 1 MiB. A `Content-Length` over that gets `413` before any of the body is read, so a caller can't hold a request open by promising a body it never sends; a body without a length is counted as it arrives. A stream (the blocked accesses, the bridge's calls) never fills the host's memory either: when a caller keeps it open but stops reading, and more than 4 MiB wait to be sent, the host drops the connection and the route cleans up as if the caller had gone.
 
-| Request                                                | Answer                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `GET /v1/health`                                       | `{"ok":true,"version":"<version>"}`                                      |
-| `GET /v1/sandbox/check`                                | the `SandboxCheck`, as the port answers it                               |
-| `GET /v1/sandbox/capabilities`                         | the `SandboxCapabilities`                                                |
-| `POST /v1/sandbox/sessions/open` with `{"profile"}`    | `{"session","fence"}`: the new session's id and its fence proof          |
+| Request | Answer |
+| --- | --- |
+| `GET /v1/health` | `{"ok":true,"version":"<version>"}` |
+| `GET /v1/sandbox/check` | the `SandboxCheck`, as the port answers it |
+| `GET /v1/sandbox/capabilities` | the `SandboxCapabilities` |
+| `POST /v1/sandbox/sessions/open` with `{"profile"}` | `{"session","fence"}`: the new session's id and its fence proof |
 | `POST /v1/sandbox/sessions/blocked` with `{"session"}` | a stream, one `SandboxBlock` per line (NDJSON), until the session closes |
-| `POST /v1/sandbox/sessions/close` with `{"session"}`   | `{"closed":true}`                                                        |
-| `POST /v1/bridge/open`                                 | an NDJSON stream: the bridge, then its calls to Studio (below)           |
-| `POST /v1/bridge/answer`                               | `{"answered":true}`, or `404` for a call the bridge isn't waiting for    |
-| `POST /v1/bridge/close`                                | `{"closed":true}`, or `404` for an unknown bridge                        |
-| `GET /v1/harnesses`                                    | `[{"id","name"}]`                                                        |
-| `POST /v1/harnesses/detect` with `{"harness"}`         | the `HarnessDetection`                                                   |
-| `POST /v1/harnesses/runs/start`                        | an NDJSON stream: the run's id, then its events (below)                  |
-| `POST /v1/harnesses/runs/send` with `{"run","input"}`  | `{"sent":true}`, or `409 send_failed` when the run refuses the input     |
-| `POST /v1/harnesses/runs/cancel` with `{"run"}`        | `{"cancelled":true}`                                                     |
+| `POST /v1/sandbox/sessions/close` with `{"session"}` | `{"closed":true}` |
+| `POST /v1/bridge/open` | an NDJSON stream: the bridge, then its calls to Studio (below) |
+| `POST /v1/bridge/answer` | `{"answered":true}`, or `404` for a call the bridge isn't waiting for |
+| `POST /v1/bridge/close` | `{"closed":true}`, or `404` for an unknown bridge |
+| `GET /v1/harnesses` | `[{"id","name"}]` |
+| `POST /v1/harnesses/detect` with `{"harness"}` | the `HarnessDetection` |
+| `POST /v1/harnesses/runs/start` | an NDJSON stream: the run's id, then its events (below) |
+| `POST /v1/harnesses/runs/send` with `{"run","input"}` | `{"sent":true}`, or `409 send_failed` when the run refuses the input |
+| `POST /v1/harnesses/runs/cancel` with `{"run"}` | `{"cancelled":true}` |
 
 ## The sandbox over loopback
 
@@ -93,6 +93,8 @@ A session is named by an id the host makes; any other id gets `404 unknown_sessi
 ```
 
 The first line is `opened`, or `{"type":"failed","message"}` when the bridge couldn't listen. Each `call` is one of `recorder.record`, `tools.list`, `tools.check`, `tools.call`, `approvals.request` and `secrets.get`, with the port's arguments; Studio answers it with `POST /v1/bridge/answer` and `{ bridge, call, result }` or `{ bridge, call, error }`. A `cancel` means the bridge stopped waiting (the program went away), so Studio can stop the tool call or withdraw the approval. The host checks each answer against the port's shape, and asks only for the secrets the run's `providers` name. A bridge is named by a random id the host makes, like a session, because call ids (`1`, `2`, …) repeat from bridge to bridge.
+
+Studio must answer `recorder.record`, `tools.list`, `tools.check` and `secrets.get` within 30 seconds, or the host sends a `cancel` and the bridge's request fails, so a Studio that hangs can't hold it forever. `tools.call` and `approvals.request` have no limit, because a tool's run and a person's approval rightly take long. A call fails too when Studio answers it with an error, or when the stream ends (Studio crashed or reloaded) before it answers.
 
 The bridge closes on `POST /v1/bridge/close`, which waits until its last events are recorded and then ends the stream; when Studio goes away, which ends the stream; and when the host stops.
 
