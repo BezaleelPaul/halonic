@@ -259,6 +259,51 @@ describe("SrtSandbox with the real fence", () => {
     }
   });
 
+  // srt puts 127.0.0.1 in NO_PROXY, so a client that follows it (Claude Code
+  // and Codex do) dials a loopback bridge directly. The fence blocks that: on
+  // Linux it has its own empty network namespace, and on macOS Seatbelt lets
+  // the program reach only srt's proxy. Only a client forced through the proxy
+  // (the test above) reaches the bridge. This is why the bridge moves to a
+  // Unix socket (HAL-6316), and it stays as a W9 guard: no direct path to the
+  // host's loopback.
+  it("a client that follows NO_PROXY can't reach a loopback bridge", async () => {
+    let connections = 0;
+    const server = await new Promise<Server>((resolve) => {
+      const listening = createServer((_request, response) => response.end("reached"));
+      listening.on("connection", () => {
+        connections += 1;
+      });
+      listening.listen(0, "127.0.0.1", () => resolve(listening));
+    });
+    const port = (server.address() as AddressInfo).port;
+    const bridged = await sandbox.open({
+      ...profile(),
+      network: { bridge: { host: "127.0.0.1", port }, allowedSites: [] },
+    });
+    const ask = async (options: string): Promise<string> => {
+      const started = await bridged.start({
+        program: "sh",
+        args: ["-c", `curl -s --max-time 10 ${options} http://127.0.0.1:${port}/`],
+      });
+      const body = await read(started.stdout);
+      await started.exited;
+      return body.trim();
+    };
+    try {
+      const env = await bridged.start({ program: "env", args: [] });
+      const [variables] = await Promise.all([read(env.stdout), env.exited]);
+      expect(variables).toMatch(/^no_proxy=.*\b127\.0\.0\.1\b/m);
+      // As the program would: srt's proxy variables and its NO_PROXY.
+      expect(await ask("")).not.toBe("reached");
+      // Directly, whatever the variables say.
+      expect(await ask("--noproxy '*'")).not.toBe("reached");
+      expect(connections).toBe(0);
+    } finally {
+      await bridged.close();
+      server.close();
+    }
+  });
+
   it("without a bridge, reaches no loopback port and gets no proxy variable", async () => {
     let connections = 0;
     const server = await new Promise<Server>((resolve) => {
