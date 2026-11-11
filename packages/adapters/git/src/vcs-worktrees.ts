@@ -108,9 +108,7 @@ export class GitWorktrees {
   async diff(repository: Repository, version: string, id: string): Promise<VcsFileDiff[]> {
     checkCommitId(version);
     await checkKnownVersion(repository, version);
-    const worktree = await this.#known(repository, id);
-    if (!(await isFolder(worktree.folder))) throw unknownWorktree(id);
-    await checkUsable(repository, worktree);
+    const worktree = await this.usable(repository, id);
     const indexFile = join(worktree.gitDir, `halonic-diff-${randomUUID()}.index`);
     const onCopy = (args: readonly string[]): Promise<Buffer> =>
       repository.output({ args, worktree, indexFile, config: diffConfig });
@@ -123,11 +121,26 @@ export class GitWorktrees {
         const diff = (await onCopy([...diffArgs, version, "--", path])).toString("utf8");
         diffs.push({ path, status, diff });
       }
-      // By code point, as git sorts paths, whatever the locale.
+      // By UTF-16 code unit, whatever the locale, as the memory adapter and
+      // `listAt` sort paths. Git's own order is by UTF-8 byte, which only
+      // differs for a path mixing characters beyond U+FFFF with U+E000-U+FFFF.
       return diffs.sort((a, b) => Number(a.path > b.path) - Number(a.path < b.path));
     } finally {
       await rm(indexFile, { force: true });
     }
+  }
+
+  /**
+   * The worktree `id` names, ready for git to run in: its folder is there
+   * and its record passes every check.
+   *
+   * @throws as {@link GitWorktrees.remove}, and when the record was changed
+   */
+  async usable(repository: Repository, id: string): Promise<WorktreeLocation> {
+    const worktree = await this.#known(repository, id);
+    if (!(await isFolder(worktree.folder))) throw unknownWorktree(id);
+    await checkUsable(repository, worktree);
+    return worktree;
   }
 
   /**
