@@ -107,6 +107,17 @@ export {
   paletteGroups,
   paletteGroupTitles,
 } from "./palette/palette-groups.ts";
+export {
+  type ActiveRowChange,
+  keptActive,
+  movedActive,
+  type PaletteKey,
+  paletteKeyFor,
+  paletteOptionName,
+  paletteOptions,
+  resultCountDelayMs,
+  resultCountText,
+} from "./palette/palette-options.ts";
 export { type FoundItems, searchProviders } from "./palette/search-providers.ts";
 export {
   CHAT_MIN_WIDTH,
