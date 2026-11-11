@@ -36,6 +36,7 @@ export {
 } from "./init-workspace.ts";
 export {
   filesOf,
+  isUnreadable,
   type LoadedFile,
   type LoadedFileOf,
   type LoadedWorkspace,
