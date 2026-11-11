@@ -26,13 +26,18 @@ async function folderWith(name: string, executable: boolean): Promise<string> {
 
 verifies("git.find-git", () => {
   describe("findGit", () => {
-    it("takes the first absolute folder that has an executable git, in PATH order", async () => {
-      const notExecutable = await folderWith("git", false);
-      const first = await folderWith("git", true);
-      const second = await folderWith("git", true);
-      const path = ["", "bin", ".", notExecutable, first, second].join(":");
-      expect(await findGit({ path, platform: "linux" })).toBe(join(first, "git"));
-    });
+    // The folders are this computer's, read as POSIX ones. On Windows the
+    // gitCandidates case below and the real PATH lookup cover the order.
+    it.skipIf(process.platform === "win32")(
+      "[platform:win32] has no execute bit and no POSIX folders: takes the first absolute folder that has an executable git, in PATH order",
+      async () => {
+        const notExecutable = await folderWith("git", false);
+        const first = await folderWith("git", true);
+        const second = await folderWith("git", true);
+        const path = ["", "bin", ".", notExecutable, first, second].join(":");
+        expect(await findGit({ path, platform: "linux" })).toBe(join(first, "git"));
+      },
+    );
 
     it("skips a folder whose git is a folder", async () => {
       const folder = await scratch.folder();
@@ -67,8 +72,8 @@ verifies("git.find-git", () => {
     });
 
     // Windows names the variable `Path`; the runner reads it in any case.
-    it.runIf(process.platform !== "win32")(
-      "looks for git in the Path of the environment it is given, in any case",
+    it.skipIf(process.platform === "win32")(
+      "[platform:win32] needs a /bin/sh script as git: looks for git in the Path of the environment it is given, in any case",
       async () => {
         const folder = await scratch.folder();
         // It answers the runner's check that the hardening reaches git, as git would.
@@ -87,9 +92,14 @@ verifies("git.find-git", () => {
     );
 
     // HAL-4373: an agent runner's launcher on the PATH did this, and every
-    // planted hook and program ran.
-    it.runIf(process.platform !== "win32")(
-      "refuses a git wrapper that drops the hardening config",
+    // planted hook and program ran. Windows has the same attack, but not
+    // through a script: findGit takes only git.exe, never a git.cmd or
+    // git.bat (the Windows case above), and the runner starts git without a
+    // shell, which Node refuses for a .cmd or .bat. A wrapper there has to
+    // be a compiled git.exe, which this test can't build. The check is the
+    // same code on Windows, and every runner made there passes through it.
+    it.skipIf(process.platform === "win32")(
+      "[platform:win32] HAL-4373: a wrapper there is a compiled git.exe, not a script this test can write: refuses a git wrapper that drops the hardening config",
       async () => {
         const folder = await scratch.folder();
         const wrapper = join(folder, "git");
