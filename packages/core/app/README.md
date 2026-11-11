@@ -40,7 +40,7 @@ Device-wide settings such as the theme live outside any scope.
 | `RunHistory.showRun` | one run, real or test, by its full or short id: the summary worked out from its log, and the log, oldest first | `app.run-show` |
 | `RunHistory.findRun` | the run a typed id points to: the full id or the short id (`shortRunId`), in any case; the list is checked first, so a full id in capitals finds the run as stored on Windows; none, or several with the same end | `app.run-short-id` |
 | `RunHistory.hasTestRuns` | whether a workspace has test runs, so an empty run list can say it has only those | `app.run-list-facts` |
-| `RunHistory.madeToolCalls` | whether a run's log has a tool call, so the list can say a run sent nothing | `app.run-list-facts` |
+| `RunHistory.sends` | what a run sent and may have sent, and whether it made a tool call, so the list says it as the receipt does | `app.run-list-facts` |
 | `runStanding`, `runWait` | where a run stands (running, needs you, waiting, done, failed, stopped at its budget, cancelled) and what it waits for, first that applies: approvals, a child run, a wait step, a timer | `app.run-standing` |
 | `moneyAmount` | an amount in the workspace's currency: two decimals, three below one cent, "under €0.001" for less | `app.money-amount` |
 | `RunEvents.sendEvent` | sends an event to a run only while it waits for it, answering the oldest waiting item; refuses with `RunEventRefused` otherwise | `app.run-send` |
