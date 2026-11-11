@@ -1,7 +1,9 @@
-export { isAbsolutePath, type ProfilePlatform } from "./native-path.ts";
+export { isAbsolutePath, type ProfilePlatform, withHomeAsTilde } from "./native-path.ts";
 export {
   type ProfileEnvironment,
   type ProfileFolder,
+  pluginRecordsFolder,
+  pluginsFolder,
   profileFolder,
   sandboxJournalFolder,
   trustFolder,
