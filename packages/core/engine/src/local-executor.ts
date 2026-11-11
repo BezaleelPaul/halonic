@@ -42,6 +42,7 @@ import {
 } from "./run/connector-calls.ts";
 import { LocalRuns } from "./run/local-runs.ts";
 import type { LocalRunsOptions } from "./run/local-runs-options.ts";
+import { refusalLog } from "./run/refusal-log.ts";
 import { runAgentTools } from "./run/run-agent-tools.ts";
 import { AgentMemory } from "./tools/agent-memory/agent-memory.ts";
 import { memoryTools } from "./tools/agent-memory/memory-tools.ts";
@@ -418,16 +419,14 @@ export class LocalExecutor implements RunExecutor {
   }
 
   /**
-   * A run's model call: the state's prompt to its agent's model, with
-   * Halonic's tools, the agent's memory and knowledge tools, the tools its file grants
-   * ({@link LocalExecutor.runToolsOf}) and, with `runs.connectorCalls`, the
-   * tools of the connected servers its kept file lists ({@link connectorsOf})
-   * that their kept files allow ({@link allowedToolsOf}), through the same
-   * turn loop a chat turn uses.
-   * Every call is checked with `checkToolCall` first, and a connector call
-   * its kept file puts under `approve` asks a person ({@link runToolCheckOf}),
-   * and the agent's `maxSteps` is the round limit. The agent's own prompt and
-   * the turn's run log come later in step 4.
+   * A run's model call: the state's prompt to its agent's model, with Halonic's tools, the
+   * agent's memory and knowledge tools, the tools its file grants ({@link LocalExecutor.runToolsOf})
+   * and, with `runs.connectorCalls`, the tools of the connected servers its kept file lists
+   * ({@link connectorsOf}) that their kept files allow ({@link allowedToolsOf}), through the
+   * same turn loop a chat turn uses. Every call is checked with `checkToolCall` first, and a
+   * connector call its kept file puts under `approve` asks a person ({@link runToolCheckOf}),
+   * and the agent's `maxSteps` is the round limit. The agent's own prompt and the turn's full
+   * run log come in step 4; until then it logs only `tool.refused` ({@link refusalLog}).
    *
    * A `parallel` branch's call is offered only the connector tools whose
    * listing says they read and their kept file doesn't put under `approve`
@@ -475,6 +474,7 @@ export class LocalExecutor implements RunExecutor {
       clock: this.options.clock,
       checkCall: runToolCheckOf(connectorTools),
       autoKnowledge: knowledge.auto,
+      log: refusalLog(this.options.runs?.store, run, call, this.options.clock),
       ...(call.resume === undefined ? {} : { resumeFrom: call.resume }),
     });
     return outcome.kind === "stopped"
