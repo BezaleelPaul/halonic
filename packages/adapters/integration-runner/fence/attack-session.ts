@@ -6,13 +6,15 @@
 // integration has once it gets past the module hook and Node's layer.
 //
 // An attack script prints one JSON object: for each attempt its name and
-// whether it was `refused` or `allowed`, with the error code or what it got.
-// So a test can tell an attempt that ran and was refused from one that never
-// ran (HAL-180 finding 13).
+// whether it was `refused`, `allowed` or `timed out`, with the error code or
+// what it got. So a test can tell an attempt that ran and was refused from one
+// that never ran (HAL-180 finding 13). A timeout is not a refusal: the request
+// may have left and gone unanswered, so it never counts as `refused`.
 
 import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Sandbox, SandboxCommand } from "@halonicjs/ports";
+import { runnerCommand } from "../src/halonic/runner-command.ts";
 import {
   diskOnThisMachine,
   type RunnerFiles,
@@ -26,8 +28,8 @@ export type NodeLayer = "on" | "off";
 
 /** What happened to one attempt. */
 export interface Attempt {
-  readonly outcome: "refused" | "allowed";
-  /** The error code when refused, or what the attempt got when allowed. */
+  readonly outcome: "refused" | "allowed" | "timed out";
+  /** The error code when refused or timed out, or what the attempt got when allowed. */
   readonly detail: string;
 }
 
@@ -41,16 +43,22 @@ export interface AttackResult {
 /**
  * The helper every attack script starts with. `attempt` runs one try and
  * records `allowed` with what it got, or `refused` with the error's code.
+ * An error a script raises with the code `TIMEOUT`, or an abort signal's
+ * `TimeoutError`, is recorded as `timed out` instead.
  * The script prints the record when it ends.
  */
 const attemptHelper = `
 const attempts = {};
+function timedOut(error) {
+  return [error, error?.cause].some((e) => e?.code === "TIMEOUT" || e?.name === "TimeoutError");
+}
 async function attempt(name, run) {
   try {
     const got = await run();
     attempts[name] = { outcome: "allowed", detail: String(got).slice(0, 200) };
   } catch (error) {
-    attempts[name] = { outcome: "refused", detail: String(error?.code ?? error?.cause?.code ?? error?.message ?? error) };
+    const detail = String(error?.code ?? error?.cause?.code ?? error?.message ?? error);
+    attempts[name] = { outcome: timedOut(error) ? "timed out" : "refused", detail };
   }
 }
 process.on("beforeExit", () => {
@@ -138,14 +146,20 @@ export async function runAttack(options: RunAttackOptions): Promise<AttackResult
 }
 
 /**
- * Node started on the attack script. With Node's layer on, it gets the
- * runner's own flags: read only the script and the integration's folder,
- * nothing else allowed (see `runnerCommand`).
+ * Node started on the attack script, built from the runner's own command so
+ * a change to its flags is tested here too. With Node's layer on, the command
+ * is the runner's as it is. With it off, the Node flags before the script are
+ * left out. The script ignores the runner's arguments after it.
  */
 function attackCommand(files: RunnerFiles, nodeLayer: NodeLayer): SandboxCommand {
-  const nodeFlags =
-    nodeLayer === "on" ? ["--permission", `--allow-fs-read=${files.integrationFolder}`] : [];
-  return { program: files.node, args: [...nodeFlags, files.runnerFile] };
+  const command = runnerCommand(files, {
+    nonce: "attack",
+    folder: files.integrationFolder,
+    entryFile: files.runnerFile,
+    exportName: "attack",
+  });
+  if (nodeLayer === "on") return command;
+  return { ...command, args: command.args.slice(command.args.indexOf(files.runnerFile)) };
 }
 
 async function readText(stream: ReadableStream<Uint8Array>): Promise<string> {
