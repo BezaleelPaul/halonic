@@ -4,26 +4,12 @@ import { docsBase } from "./docs.ts";
 import { type Phrase, phrase } from "./phrase.ts";
 
 /**
- * The reason codes the CLI has its own words for. The codes the `Sandbox`
- * port added in version 6 (setup, WSL, company policy and sign-in, HAL-5389)
- * read as `other` until the sandbox design words them.
- *
- * `windows-node-in-wsl` is the CLI's own, not the port's: the sandbox check
- * refuses Windows' Node.js in a WSL folder with it (HAL-6517), because the
- * fix is Node.js inside WSL, whatever the Windows sandbox says.
+ * The reason codes the CLI has words for: every code of the `Sandbox` port,
+ * and `windows-node-in-wsl`, which is the CLI's own, not the port's: the
+ * sandbox check refuses Windows' Node.js in a WSL folder with it (HAL-6517),
+ * because the fix is Node.js inside WSL, whatever the Windows sandbox says.
  */
-type WordedReason =
-  | Extract<
-      SandboxUnavailableReason,
-      | "windows"
-      | "container"
-      | "user-namespaces-restricted"
-      | "bubblewrap-missing"
-      | "linux-tools-missing"
-      | "ripgrep-missing"
-      | "other"
-    >
-  | typeof windowsNodeInWsl;
+type WordedReason = SandboxUnavailableReason | typeof windowsNodeInWsl;
 
 /** The CLI's own reason code for Windows' Node.js running in a WSL folder. */
 export const windowsNodeInWsl = "windows-node-in-wsl";
@@ -34,7 +20,9 @@ export const windowsNodeInWsl = "windows-node-in-wsl";
  * line, except `container`, whose fix says where `run` works instead, since
  * the command line is where containers come up (CI). `other`, and a code
  * Halonic doesn't know, is worded from the code alone: the check's own
- * sentence is for logs and shows only with `--debug`.
+ * sentence is for logs and shows only with `--debug`. The codes port
+ * version 6 added take the onboarding wording's reasons where it has them
+ * (HAL-3778 section 4) and the team's words where it doesn't (HAL-5900).
  */
 const refusedFixes: Readonly<Record<WordedReason, string>> = {
   windows:
@@ -43,6 +31,22 @@ const refusedFixes: Readonly<Record<WordedReason, string>> = {
     "This is Windows' Node.js, running in a WSL folder, and the sandbox can't start with it. Install Node.js inside WSL and run halonic from a WSL terminal.",
   container:
     "Halonic is running inside a container, and the sandbox can't start there. Run halonic run on the computer itself, not in a container. halonic validate and halonic test work in a container.",
+  "not-supported":
+    "This version or edition of the operating system can't run the sandbox. Update it, or pick another sandbox in Halonic Studio, under Settings > Sandbox.",
+  "blocked-by-policy":
+    "A company policy on this computer blocks the sandbox. Ask whoever manages this computer to allow it, or pick another sandbox in Halonic Studio, under Settings > Sandbox.",
+  "virtualisation-off":
+    "Hardware virtualisation is turned off on this computer. Turn it on in the computer's firmware settings (BIOS or UEFI). In a virtual machine, turn on nested virtualisation. Then run it again.",
+  "wsl-missing":
+    "WSL isn't installed, and the sandbox needs it. Install it with wsl --install --no-distribution in a terminal run as administrator, restart Windows, then run it again.",
+  "restart-needed":
+    "Windows needs to restart to finish setting up WSL. Restart Windows, then run it again.",
+  "distro-missing":
+    "WSL works, but Halonic's own Linux system for the sandbox isn't installed. Set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox, then run it again.",
+  "setup-conflict":
+    "Another program set up the sandbox on this computer, in a way Halonic can't use. Set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox, then run it again.",
+  "setup-needed":
+    "The sandbox's one-time setup isn't done for this version of Halonic. Set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox, or finish this sandbox's setup there, then run it again.",
   "user-namespaces-restricted":
     "Ubuntu 24.04 blocks the user namespaces the sandbox needs. Allow them for bubblewrap with an AppArmor rule; the guide has the exact commands.",
   "bubblewrap-missing":
@@ -51,6 +55,8 @@ const refusedFixes: Readonly<Record<WordedReason, string>> = {
     "socat or ripgrep isn't installed. Install them, for example on Ubuntu or Debian with sudo apt install socat ripgrep, then run it again.",
   "ripgrep-missing":
     "ripgrep isn't installed. Install it, for example on macOS with brew install ripgrep, then run it again.",
+  "sign-in-needed":
+    "The sandbox needs you to sign in to its service first. Sign in, for example with docker login for Docker Sandboxes, then run it again.",
   other:
     "Halonic can't tell what the sandbox is missing. See what the sandbox needs on this computer, then run it again.",
 };
@@ -60,10 +66,20 @@ const reasons: Readonly<Record<WordedReason, string>> = {
   windows: "The sandbox doesn't work on Windows in this version of Halonic.",
   [windowsNodeInWsl]: "Windows' Node.js can't start the sandbox in a WSL folder.",
   container: "Halonic is running inside a container, and the sandbox can't start there.",
+  "not-supported": "This version or edition of the operating system can't run the sandbox.",
+  "blocked-by-policy": "A company policy on this computer blocks the sandbox.",
+  "virtualisation-off": "Hardware virtualisation is turned off on this computer.",
+  "wsl-missing": "WSL isn't installed, and the sandbox needs it.",
+  "restart-needed": "Windows needs to restart to finish setting up WSL.",
+  "distro-missing": "WSL works, but Halonic's own Linux system for the sandbox isn't installed.",
+  "setup-conflict":
+    "Another program set up the sandbox on this computer, in a way Halonic can't use.",
+  "setup-needed": "The sandbox's one-time setup isn't done for this version of Halonic.",
   "user-namespaces-restricted": "Ubuntu 24.04 blocks the user namespaces the sandbox needs.",
   "bubblewrap-missing": "bubblewrap isn't installed, and the sandbox needs it.",
   "linux-tools-missing": "socat or ripgrep isn't installed, and the sandbox needs both.",
   "ripgrep-missing": "ripgrep isn't installed, and the sandbox needs it.",
+  "sign-in-needed": "The sandbox needs you to sign in to its service first.",
   other: "Halonic can't tell what the sandbox is missing.",
 };
 
@@ -76,6 +92,19 @@ const fixes: Readonly<Record<WordedReason, string>> = {
   windows: "use Halonic inside WSL 2 on this computer.",
   [windowsNodeInWsl]: "install Node.js inside WSL and open a WSL terminal.",
   container: "run Halonic on the computer itself, not in a container.",
+  "not-supported":
+    "update the operating system, or pick another sandbox in Halonic Studio, under Settings > Sandbox.",
+  "blocked-by-policy":
+    "ask whoever manages this computer to allow it, or pick another sandbox in Halonic Studio, under Settings > Sandbox.",
+  "virtualisation-off":
+    "turn it on in the computer's firmware settings (BIOS or UEFI). In a virtual machine, turn on nested virtualisation.",
+  "wsl-missing":
+    "install it with wsl --install --no-distribution in a terminal run as administrator, then restart Windows.",
+  "restart-needed": "restart Windows.",
+  "distro-missing": "set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox.",
+  "setup-conflict": "set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox.",
+  "setup-needed":
+    "set up the sandbox with WSL in Halonic Studio, under Settings > Sandbox, or finish this sandbox's setup there.",
   "user-namespaces-restricted":
     "allow them for bubblewrap with an AppArmor rule. The guide has the exact commands.",
   "bubblewrap-missing":
@@ -83,14 +112,15 @@ const fixes: Readonly<Record<WordedReason, string>> = {
   "linux-tools-missing":
     "install them, for example on Ubuntu or Debian with sudo apt install socat ripgrep.",
   "ripgrep-missing": "install it, for example on macOS with brew install ripgrep.",
+  "sign-in-needed": "sign in, for example with docker login for Docker Sandboxes.",
   other: "see what the sandbox needs on this computer.",
 };
 
 /**
  * The sentences for a sandbox that can't start (cli-output 1.3, 3.7 and 3.8,
  * sandbox-screens 3.1 and 3.4). `run` and `runs send` check the sandbox
- * before they start anything; `validate` and `test` never do. A code the
- * `Sandbox` port adds later reads as `other` until it gets its own words.
+ * before they start anything; `validate` and `test` never do. A code this
+ * version doesn't know, from a newer log, reads as `other`.
  */
 export const sandboxMessages = defineMessages("sandbox", {
   /** The reason on line 1, after "Couldn't run support-reply:"; `run` adds "Nothing ran.". */
