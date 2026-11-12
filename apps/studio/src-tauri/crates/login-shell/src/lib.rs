@@ -69,11 +69,13 @@ pub fn login_variables(
     names: &[&str],
     timeout: Duration,
 ) -> Result<BTreeMap<String, OsString>, LoginShellError> {
-    // `/usr/bin/env` by path, so shells whose own `env` differs (nushell)
-    // print the same `NAME=value` lines. `;` and `echo` work in sh, bash,
-    // zsh, fish, csh and nushell alike.
+    // `/usr/bin/env` by path, so a shell's own `env` can't print anything
+    // else. `;` and `echo` work in sh, bash, zsh, fish and csh. nushell may
+    // not print the first marker, as it shows only a script's last value;
+    // that gives `NoEnvironment`, and the app keeps its own variables.
     let script = format!("echo {MARKER}; /usr/bin/env; echo {MARKER}");
     let mut command = Command::new(shell);
+    own_session(&mut command);
     if is_csh(shell) {
         command.arg("-i");
     } else {
@@ -119,6 +121,7 @@ pub fn login_variables(
             return Err(LoginShellError::NoEnvironment);
         }
         if Instant::now() >= deadline {
+            stop_group(&child);
             stop(&mut child);
             return Err(LoginShellError::TimedOut);
         }
@@ -139,13 +142,68 @@ fn next_chunk(receiver: &mpsc::Receiver<Vec<u8>>, open: &mut bool) -> Option<Vec
     }
 }
 
-/// Stops the shell if it still runs, and reaps it.
+/// Stops the shell if it still runs, and reaps it. What the rc files
+/// started is left running: a shell that answered may have started an
+/// agent the person wants, such as `ssh-agent`.
 fn stop(child: &mut Child) {
     if matches!(child.try_wait(), Ok(None)) {
         let _ = child.kill();
     }
     let _ = child.wait();
 }
+
+/// On Unix, the shell leads a session of its own, and so a process group
+/// with the same id as its process, so a shell that hangs can be stopped
+/// with everything its rc files started.
+///
+/// A session, not just a group (HAL-6597): when Studio has a terminal
+/// (`pnpm tauri dev`, or started from a shell), an interactive bash or zsh
+/// in a group of its own sees it isn't the terminal's foreground and stops
+/// itself (`SIGTTIN`), so it never answers. A new session has no terminal.
+#[cfg(unix)]
+fn own_session(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: the closure runs in the child between `fork` and `exec`, where
+    // only async-signal-safe calls are allowed. It makes one, `setsid`, and
+    // reads `errno`; it allocates nothing and takes no lock.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Stops the shell's whole process group, for a shell that didn't answer in
+/// time; otherwise a program its rc files started (`sleep`, a prompt that
+/// waits) would keep running and hold the reader thread. The shell hasn't
+/// been reaped yet, so the id is still its group's. As in `git-guard`, the
+/// group is signalled through `/bin/sh`'s own `kill`, which keeps the
+/// crate's unsafe code to the one `setsid` call.
+#[cfg(unix)]
+fn stop_group(child: &Child) {
+    let _ = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "kill -s KILL -- \"-$1\"",
+            "sh",
+            &child.id().to_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// Elsewhere the shell is only asked on macOS and Linux, so there is no
+/// session.
+#[cfg(not(unix))]
+fn own_session(_command: &mut Command) {}
+
+#[cfg(not(unix))]
+fn stop_group(_child: &Child) {}
 
 /// The values of `names` in `env` output between the first two marker
 /// lines, or `None` when there aren't two. The shell's exit status isn't
