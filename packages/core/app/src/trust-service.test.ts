@@ -1,9 +1,19 @@
-import type { Agent, Connector, IntegrationSheet, Provider } from "@halonicjs/format";
-import type { Clock, Digest, TrustRecord } from "@halonicjs/ports";
+import type { Connector } from "@halonicjs/format";
+import type { Digest, TrustRecord } from "@halonicjs/ports";
 import { verifies } from "@halonicjs/testing-spec";
-import type { LocalIntegrationInput } from "@halonicjs/workspace";
 import { expect, expectTypeOf, it } from "vitest";
-import { TestTrustStore } from "./testing/test-trust-store.ts";
+import {
+  commandPaths,
+  harnessAgent,
+  homeStation,
+  location,
+  pin,
+  program,
+  provider,
+  remote,
+  setUpTrustService,
+  subject,
+} from "./testing/trust-service-fixtures.ts";
 import { type TrustCheck, TrustService, type TrustSubject } from "./trust-service.ts";
 
 /** SHA-256 from Web Crypto, as the platform's `Digest` adapter gives it. */
@@ -13,88 +23,23 @@ const digest: Digest = {
   },
 };
 
-const location = "/workspaces/acme";
-const commandPaths = new Map([["node", "/usr/bin/node"]]);
+const setup = () => setUpTrustService(digest);
 
-function program(id: string, env: Record<string, string> = {}): Connector {
-  return {
-    version: 1,
-    id,
-    transport: { stdio: { command: "node", args: [`${id}.js`], env } },
-    tools: { approve: [] },
-  };
-}
-
-function subject(...connectors: Connector[]): TrustSubject {
-  return { location, connectors, commandPaths, agents: [], integrations: [], providers: [] };
-}
-
-/** A local integration that reads its address from the workspace setting `url`. */
-function homeStation(url: string): LocalIntegrationInput {
-  // Built as data, so the test doesn't depend on the sheet's other fields.
-  const sheet = {
-    id: "home-station",
-    version: "1.0.0",
-    kit: 1,
-    provides: ["connector"],
-    hosts: [{ fromSetting: "url", class: "private" }],
-    secrets: {},
-    tokens: [],
-    tools: [],
-    needs: [],
-  } as unknown as IntegrationSheet;
-  return { sheet, settings: { url }, folder: "integrations/home-station", code: "sha256:00" };
-}
-
-/** A model provider as parsed from its file, with the defaults filled in. */
-function provider(fields: Partial<Provider> = {}): Provider {
-  return {
-    version: 1,
-    id: "claude",
-    type: "anthropic",
-    secret: "anthropic-key",
-    local: false,
-    options: {},
-    ...fields,
-  };
-}
-
-/** An agent that runs in Claude Code and may reach the given sites. */
-function harnessAgent(allowedSites: string[]): Agent {
-  return {
-    version: 1,
-    id: "coder",
-    name: "Coder",
-    params: {},
-    instructions: "",
-    skills: [],
-    knowledge: [],
-    connectors: [],
-    runLogs: false,
-    collections: [],
-    subagents: [],
-    methods: {},
-    output: { type: "text" },
-    maxSteps: 6,
-    harness: "claude-code",
-    allowedSites,
-  };
-}
-
-function setup() {
-  const store = new TestTrustStore();
-  let now = "2026-11-09T10:00:00.000Z";
-  const clock: Clock = { now: () => new Date(now) };
-  const service = new TrustService({ store, digest, clock, appVersion: "0.1.0" });
-  const later = (iso: string) => {
-    now = iso;
-  };
-  return { store, service, later };
+/** Checks a workspace that refuses nothing, so the check has a fingerprint. */
+async function fingerprinted(
+  service: TrustService,
+  workspace: TrustSubject,
+): Promise<Exclude<TrustCheck, { status: "refused" }>> {
+  const check = await service.check(workspace);
+  if (check.status === "refused") {
+    throw new Error(`The check refused ${check.refused.map((entry) => entry.id).join(", ")}.`);
+  }
+  return check;
 }
 
 /** Trusts the workspace as a person would: with the fingerprint the check showed. */
 async function trustAsPerson(service: TrustService, workspace: TrustSubject): Promise<void> {
-  const shown = await service.check(workspace);
+  const shown = await fingerprinted(service, workspace);
   const granted = await service.grant(workspace, shown.fingerprint, "cli");
   expect(granted.ok).toBe(true);
 }
@@ -250,11 +195,55 @@ verifies("app.trust-service", () => {
     expect(check).not.toHaveProperty("grant");
   });
 
+  it("refuses a connector whose URL has user info, with no fingerprint, grant or password (HAL-5421)", async () => {
+    const { service, store } = setup();
+    await trustAsPerson(service, subject(program("files")));
+
+    const check = await service.check(
+      subject(program("files"), remote("mail", "https://ops:pw@mail.example.com/mcp")),
+    );
+
+    expectStatus(check, "refused");
+    expect(check.refused).toEqual([{ id: "mail", reason: "the URL has user info" }]);
+    expect(check).not.toHaveProperty("fingerprint");
+    expect(check).not.toHaveProperty("grant");
+    expect(JSON.stringify(check)).not.toContain("pw");
+    expect((await store.get(location))?.content).not.toHaveProperty("refused");
+  });
+
+  it("refuses a provider whose baseUrl has user info, also after the workspace was trusted", async () => {
+    const { service } = setup();
+    await trustAsPerson(service, { ...subject(program("files")), providers: [provider()] });
+
+    const check = await service.check({
+      ...subject(program("files")),
+      providers: [provider({ baseUrl: "https://ops:pw@models.example.net/v1" })],
+    });
+
+    expectStatus(check, "refused");
+    expect(check.refused).toEqual([{ id: "claude", reason: "the URL has user info" }]);
+    expect(check).not.toHaveProperty("grant");
+    expect(JSON.stringify(check)).not.toContain("pw");
+  });
+
+  it("never shrinks a record whose content was edited to list refused connectors", async () => {
+    const { service, store } = setup();
+    await trustAsPerson(service, subject(program("files"), program("mail")));
+    const record = (await store.get(location)) as TrustRecord;
+    const refused = [{ id: "web", reason: "the URL has user info" }];
+    await store.grant({ ...record, content: { ...(record.content as object), refused } });
+
+    const check = await service.check(subject(program("files")));
+
+    expectStatus(check, "changed");
+    expect(await store.get(location)).toMatchObject({ fingerprint: record.fingerprint });
+  });
+
   it("saves nothing when the shown fingerprint is a prefix or out of date", async () => {
     const { service, store } = setup();
-    const old = await service.check(subject(program("files")));
+    const old = await fingerprinted(service, subject(program("files")));
     const workspace = subject(program("files", { PYTHONSTARTUP: "x.py" }));
-    const { fingerprint } = await service.check(workspace);
+    const { fingerprint } = await fingerprinted(service, workspace);
 
     for (const shown of [fingerprint.slice(0, 12), old.fingerprint, ""]) {
       expect(await service.grant(workspace, shown, "prompt")).toEqual({
@@ -268,7 +257,7 @@ verifies("app.trust-service", () => {
   it("puts the resolved command in the fingerprint, and can't be called without it", async () => {
     const { service } = setup();
     const connectors = [program("files")];
-    const here = await service.check({
+    const here = await fingerprinted(service, {
       location,
       connectors,
       commandPaths,
@@ -276,7 +265,7 @@ verifies("app.trust-service", () => {
       integrations: [],
       providers: [],
     });
-    const there = await service.check({
+    const there = await fingerprinted(service, {
       location,
       connectors,
       commandPaths: new Map([["node", "/opt/evil/node"]]),
@@ -425,7 +414,7 @@ verifies("app.trust-service", () => {
     expectStatus(check, "new");
     expect(check.unpinned).toEqual(["crm", "mail"]);
     expect(JSON.stringify(check.content)).not.toContain("unpinned");
-    const filesOnly = await service.check(subject(program("files")));
+    const filesOnly = await fingerprinted(service, subject(program("files")));
     expect(filesOnly.unpinned).toEqual([]);
   });
 
@@ -451,12 +440,3 @@ verifies("app.trust-service", () => {
     expectStatus(await service.check(subject(program("files"))), "new");
   });
 });
-
-function pin(name: string) {
-  return {
-    registry: "npm" as const,
-    registryUrl: "https://registry.npmjs.org",
-    package: name,
-    version: "1.0.0",
-  };
-}
