@@ -36,6 +36,11 @@ export {
   type EscapePress,
 } from "./close-stack/close-stack.ts";
 export {
+  type DialogHostProps,
+  FeatureDialogs,
+  type FeatureDialogsProps,
+} from "./dialogs/feature-dialogs.tsx";
+export {
   createShellEngine,
   type EngineConnectionEvent,
   type EngineConnectionListener,
@@ -195,7 +200,11 @@ export {
   switchPhonePlace,
 } from "./phone/place-stacks.ts";
 export { type PhonePlaces, usePhonePlaces } from "./phone/use-phone-places.ts";
-export type { CommandContributions, CommandPoints } from "./points/command-points.ts";
+export type {
+  CommandContributions,
+  CommandPoints,
+  ContextFor,
+} from "./points/command-points.ts";
 export type {
   CommandContribution,
   CommandSource,
@@ -208,6 +217,7 @@ export type {
 export {
   type BarItemContribution,
   type CardContribution,
+  type DialogHostContribution,
   type PanelWindowContribution,
   type PhoneBarContribution,
   type PlaceContribution,
