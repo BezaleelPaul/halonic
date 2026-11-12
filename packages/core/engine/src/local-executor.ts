@@ -101,6 +101,12 @@ export interface LocalExecutorOptions {
   chatConnectorToolsOf?(
     request: ChatTurnRequest,
   ): Promise<Readonly<Record<string, Connector["tools"]>>>;
+  /**
+   * Local-only workspace (`privacy.localOnly`): Halonic's own loop skips models that aren't
+   * `local` (a run left with none fails `local-only`) and uses only `local` connectors. Agents
+   * in a harness program (`runs.harnesses`) aren't covered yet (HAL-5922).
+   */
+  readonly localOnly?: boolean;
 }
 
 /** The round limit of a chat turn when the options don't set one. */
@@ -136,7 +142,8 @@ export class LocalExecutor implements RunExecutor {
     if (!Number.isInteger(maxRounds) || maxRounds < 1) {
       throw new RangeError(`maxRounds must be a whole number of 1 or more, not ${maxRounds}.`);
     }
-    this.options = options;
+    const connectors = options.connectors.filter((each) => !options.localOnly || each.local);
+    this.options = { ...options, connectors };
     this.maxRounds = maxRounds;
     const connectorCalls = options.runs?.connectorCalls;
     this.runs =
@@ -148,8 +155,7 @@ export class LocalExecutor implements RunExecutor {
             (run, call) => this.callModel(run, call),
             connectorCalls === undefined
               ? undefined
-              : (effect) =>
-                  makeConnectorCall(options.connectors, effectBoundary(connectorCalls), effect),
+              : (effect) => makeConnectorCall(connectors, effectBoundary(connectorCalls), effect),
           );
     const runs = options.runs;
     this.chatHarnesses =
@@ -288,6 +294,7 @@ export class LocalExecutor implements RunExecutor {
       agent: request.agentId ?? chatAgent,
       clock: this.options.clock,
       autoKnowledge: knowledge.auto,
+      localOnly: this.options.localOnly === true,
     });
   }
 
@@ -390,6 +397,7 @@ export class LocalExecutor implements RunExecutor {
             clock: this.options.clock,
             connectors: this.options.connectors,
             ...(connectorCalls === undefined ? {} : { effects: effectBoundary(connectorCalls) }),
+            localOnly: this.options.localOnly === true,
             knowledgeOf: (id) => this.runKnowledgeOf(turn, id),
             toolsOf: (id, depth, knowledge) => this.runToolsOf(turn, id, depth, knowledge),
           },
@@ -465,6 +473,7 @@ export class LocalExecutor implements RunExecutor {
       autoKnowledge: knowledge.auto,
       log: refusalLog(this.options.runs?.store, run, call, this.options.clock),
       ...(call.resume === undefined ? {} : { resumeFrom: call.resume }),
+      localOnly: this.options.localOnly === true,
     });
     if (outcome.kind === "stopped") return outcome.stop;
     // An answer cut off at the limit isn't the agent's answer: the state mustn't go on with it.
@@ -478,9 +487,7 @@ export class LocalExecutor implements RunExecutor {
 
   /** The definitions the run started with. */
   private async keptDefinitions(run: RunState): Promise<RunDefinitions> {
-    if (this.options.runs === undefined) {
-      throw noRuns();
-    }
+    if (this.options.runs === undefined) throw noRuns();
     return await definitionsOf(this.options.runs.blobs, run.definitionsVersion);
   }
 }
