@@ -1,7 +1,6 @@
-import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { skillScriptsRefusal, touchesSkillScripts } from "@halonicjs/format";
 import type {
   SandboxBlockListener,
@@ -21,189 +20,19 @@ import {
   snapshotGitFolder,
   writeJournal,
 } from "./git-folder-check.ts";
+import { describeForgetFailures, type ForgetFailure, type KeptGrants } from "./kept-grants.ts";
 import { makeLauncherTemp } from "./launcher-temp.ts";
 import { type NestedGitSnapshot, snapshotNestedGit, undoNestedGit } from "./nested-git-check.ts";
 import { buildSrtConfig } from "./srt-config.ts";
 import { nodePaths, type Runner, type RunningProgram } from "./srt-runner.ts";
-
-/**
- * Variables sandbox-runtime reads from its own environment to find a parent
- * proxy. For that traffic it skips the check against private and loopback
- * addresses, so the launcher never gets them, whoever set them.
- */
-const proxyVariables = new Set(
-  ["http_proxy", "https_proxy", "all_proxy", "no_proxy", "grpc_proxy"].flatMap((name) => [
-    name,
-    name.toUpperCase(),
-  ]),
-);
-
-/**
- * What a variable name may be. `env` runs without `-i`, so a name that starts
- * with `-` would be read as one of its options (`--unset=HTTP_PROXY`).
- */
-const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/** @throws when the profile has a variable whose name is not a plain one. */
-function assertVariableNames(profile: SandboxProfile): void {
-  for (const name of Object.keys(profile.env)) {
-    if (!variableName.test(name)) {
-      throw new Error(`the profile has a variable with a name that is not plain: ${name}`);
-    }
-  }
-}
-
-/** A folder as the PATH may name it: as given, and with symlinks resolved (`/var` is `/private/var` on macOS). */
-function folderNames(folder: string): string[] {
-  const names = [resolve(folder)];
-  try {
-    names.push(realpathSync(folder));
-  } catch {
-    // The folder is gone or unreadable: only its given name counts.
-  }
-  return names;
-}
-
-/**
- * A `PATH` without entries inside the session's private folder, so nothing
- * the launcher or the program runs is ever found there. Relative entries with
- * a `..` segment are dropped too: they resolve against the program's folder,
- * which Halonic cannot know, so they could lead into the private folder.
- */
-function withoutPrivateFolder(path: string, privateFolder: string | undefined): string {
-  if (privateFolder === undefined) return path;
-  const folders = folderNames(privateFolder);
-  return path
-    .split(delimiter)
-    .filter((entry) => {
-      if (entry === "") return true;
-      if (!isAbsolute(entry) && entry.split(/[\\/]/).includes("..")) return false;
-      return !folderNames(entry).some((name) => folders.some((folder) => isInside(folder, name)));
-    })
-    .join(delimiter);
-}
-
-/**
- * The host's `PATH` without relative entries, without entries the program
- * can write and without entries in the private folder.
- */
-function safePath(profile: SandboxProfile, hostPath: string, privateFolder?: string): string {
-  const writable = [resolve(profile.workingFolder), resolve(profile.tempFolder)];
-  return withoutPrivateFolder(
-    hostPath
-      .split(delimiter)
-      .filter(
-        (entry) =>
-          isAbsolute(entry) && !writable.some((folder) => isInside(folder, resolve(entry))),
-      )
-      .join(delimiter),
-    privateFolder,
-  );
-}
-
-/**
- * The environment of the launcher, which runs outside the fence: the safe
- * host `PATH` and a temp folder. Nothing from the profile, so nothing the
- * program influences (a planted `bwrap` on the path, `NODE_OPTIONS`,
- * `LD_PRELOAD`) runs before the fence exists. With a `launcherTemp` (see
- * {@link makeLauncherTemp}), that is the launcher's own temp folder, and the
- * session's is handed to srt as the one it sets for the program.
- */
-export function launcherEnv(
-  profile: SandboxProfile,
-  hostEnv: Record<string, string | undefined> = process.env,
-  privateFolder?: string,
-  launcherTemp: string | null = null,
-): Record<string, string> {
-  const env = baseEnv(profile, hostEnv, privateFolder);
-  if (launcherTemp !== null) {
-    env["TMPDIR"] = launcherTemp;
-    env["CLAUDE_CODE_TMPDIR"] = profile.tempFolder;
-  }
-  if (process.platform === "win32") {
-    // Node and srt don't start without the system folder, and cmd.exe needs ComSpec and PATHEXT.
-    // Windows reads names without regard to case, so find them that way.
-    for (const wanted of windowsLauncherVariables) {
-      const found = Object.keys(hostEnv).find(
-        (name) => name.toUpperCase() === wanted.toUpperCase(),
-      );
-      const value = found === undefined ? undefined : hostEnv[found];
-      if (value !== undefined) env[wanted] = value;
-    }
-    env["TEMP"] = profile.tempFolder;
-    env["TMP"] = profile.tempFolder;
-  }
-  return env;
-}
-
-/** What the launcher needs from the host on Windows: where the system and the user's folders are, never anything the program can influence. */
-const windowsLauncherVariables = [
-  "SystemRoot",
-  "SystemDrive",
-  "windir",
-  "ComSpec",
-  "PATHEXT",
-  // srt-win finds the user's state folders through these.
-  "USERPROFILE",
-  "APPDATA",
-  "LOCALAPPDATA",
-  "ProgramData",
-  "USERNAME",
-  "USERDOMAIN",
-  "COMPUTERNAME",
-];
-
-/** The host's safe `PATH` and the session's temp folder, for the launcher and the program alike. */
-function baseEnv(
-  profile: SandboxProfile,
-  hostEnv: Record<string, string | undefined>,
-  privateFolder?: string,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  const hostPath = hostEnv["PATH"];
-  if (hostPath !== undefined) env["PATH"] = safePath(profile, hostPath, privateFolder);
-  env["TMPDIR"] = profile.tempFolder;
-  return env;
-}
-
-/**
- * The variables the program gets, set inside the fence on top of what srt
- * sets there (its proxy variables): the safe host `PATH` when the profile has
- * none, the session's temp folder and the profile's variables. Never the rest
- * of the host's environment, and never a proxy variable of the profile. A
- * `PATH` of the profile loses its entries in the private folder.
- *
- * @throws when a variable of the profile has a name that is not plain.
- */
-export function programEnv(
-  profile: SandboxProfile,
-  hostEnv: Record<string, string | undefined> = process.env,
-  privateFolder?: string,
-): Record<string, string> {
-  assertVariableNames(profile);
-  // Not the launcher's: on Windows its system variables would replace the sandbox account's own.
-  const env = baseEnv(profile, hostEnv, privateFolder);
-  for (const [name, value] of Object.entries(profile.env)) {
-    if (proxyVariables.has(name)) continue;
-    env[name] = name === "PATH" ? withoutPrivateFolder(value, privateFolder) : value;
-  }
-  return env;
-}
-
-/**
- * Whether the profile reaches no network at all: no bridge and no allowed
- * site. Its programs then get none of what srt sets inside the fence, so no
- * proxy variable names a way out (I5 design, HAL-958 section 9).
- */
-function reachesNoNetwork(profile: SandboxProfile): boolean {
-  return profile.network.bridge === null && profile.network.allowedSites.length === 0;
-}
-
-/** Whether `child` is `parent` or inside it. */
-function isInside(parent: string, child: string): boolean {
-  const path = relative(parent, child);
-  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
-}
+import {
+  assertVariableNames,
+  baseEnv,
+  isInside,
+  launcherEnv,
+  programEnv,
+  reachesNoNetwork,
+} from "./srt-session-env.ts";
 
 /** One started program: what the session tracks to stop it and to say why it ended. */
 interface Started {
@@ -237,6 +66,7 @@ export class SrtSession implements SandboxSession {
   readonly #gitFolder: GitFolderSnapshot | null;
   readonly #nestedGit: NestedGitSnapshot | null;
   readonly #journal: string | null;
+  readonly #grants: KeptGrants | null;
   #fence: SandboxFence;
   #closing: Promise<void> | null = null;
   #timedOut = false;
@@ -252,6 +82,7 @@ export class SrtSession implements SandboxSession {
     signal: AbortSignal | undefined,
     git: { folder: GitFolderSnapshot | null; nested: NestedGitSnapshot | null },
     journal: string | null,
+    grants: KeptGrants | null,
   ) {
     this.profile = profile;
     this.#runner = runner;
@@ -262,6 +93,7 @@ export class SrtSession implements SandboxSession {
     this.#gitFolder = git.folder;
     this.#nestedGit = git.nested;
     this.#journal = journal;
+    this.#grants = grants;
     this.#launcherEnv = launcherEnv(profile, process.env, folder, launcherTemp);
     this.#programEnv = programEnv(profile, process.env, folder);
     this.#timer = setTimeout(() => void this.#expire(), remainingMs);
@@ -281,9 +113,18 @@ export class SrtSession implements SandboxSession {
   static async open(
     profile: SandboxProfile,
     runner: Runner,
-    options: { signal?: AbortSignal; journalFolder?: string | null } = {},
+    options: {
+      signal?: AbortSignal;
+      journalFolder?: string | null;
+      /** On Windows: takes back the grants srt keeps on the session's folders. Without it nothing is forgotten. */
+      grants?: KeptGrants | null;
+      /** Where a failure to forget is logged when no caller can get it. */
+      warn?: (message: string) => void;
+    } = {},
   ): Promise<SrtSession> {
     const startedAt = Date.now();
+    const grants = options.grants ?? null;
+    grants?.assertSupported();
     assertVariableNames(profile);
     await mkdir(profile.tempFolder, { recursive: true });
     await checkCommondirs(profile.workingFolder);
@@ -295,6 +136,8 @@ export class SrtSession implements SandboxSession {
     const { journalFolder = null } = options;
     let journal: string | null = null;
     let launcherTemp: string | null = null;
+    // Held from here, before srt runs anything: the forget in the `catch` below or `close()` gives the hold up.
+    grants?.hold([profile.workingFolder, profile.tempFolder]);
     try {
       launcherTemp = await makeLauncherTemp();
       if (git.folder !== null && journalFolder !== null) {
@@ -332,12 +175,18 @@ export class SrtSession implements SandboxSession {
         options.signal,
         git,
         journal,
+        grants,
       );
       return session;
     } catch (error) {
       await rm(folder, { recursive: true, force: true });
       if (launcherTemp !== null) await rm(launcherTemp, { recursive: true, force: true });
       if (journal !== null) await rm(journal, { force: true });
+      // The fence proof ran a program on the folders, so srt may have kept grants on them.
+      const forgotten = await grants?.forget([profile.workingFolder, profile.tempFolder]);
+      if (forgotten !== undefined && forgotten.failed.length > 0) {
+        (options.warn ?? (() => undefined))(describeForgetFailures(forgotten.failed));
+      }
       throw error;
     }
   }
@@ -413,15 +262,35 @@ export class SrtSession implements SandboxSession {
     this.#detach();
     await Promise.all([...this.#started].map((started) => this.#stop(started, timedOut)));
     const failed = await this.#checkGitFolder();
+    const notForgotten = await this.#forgetGrants();
     this.#fence = { state: "stopped" };
     this.#listeners.clear();
     await rm(this.#folder, { recursive: true, force: true });
     if (this.#launcherTemp !== null) await rm(this.#launcherTemp, { recursive: true, force: true });
     // A journal whose undo failed stays, so a later `recoverGitFolders` tries again.
     if (this.#journal !== null && failed.length === 0) await rm(this.#journal, { force: true });
+    const problems: string[] = [];
     if (failed.length > 0) {
-      throw new Error(`Could not undo a change to the git folder: ${failed.join(", ")}`);
+      problems.push(`Could not undo a change to the git folder: ${failed.join(", ")}`);
     }
+    if (notForgotten.length > 0) problems.push(describeForgetFailures(notForgotten));
+    if (problems.length > 0) throw new Error(problems.join("; "));
+  }
+
+  /**
+   * Takes back the write grants srt kept on the working and temp folders
+   * (Windows), once nothing the session started is left. A folder another
+   * live session of this host uses stays; that session forgets it when it closes.
+   *
+   * @returns the folders it could not free, so `close()` can reject with them.
+   */
+  async #forgetGrants(): Promise<ForgetFailure[]> {
+    if (this.#grants === null) return [];
+    const { failed } = await this.#grants.forget([
+      this.profile.workingFolder,
+      this.profile.tempFolder,
+    ]);
+    return failed;
   }
 
   /**

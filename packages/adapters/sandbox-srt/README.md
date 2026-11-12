@@ -80,6 +80,24 @@ The same workflow runs `scripts/windows-wsl-probe.mjs`. It checks whether srt's 
 its own (and, if it can, whether that distro reads a denied file or reaches a blocked port), and
 whether WSL 2 starts on the runner at all. It writes `windows-wsl-results.json`.
 
+## Kept Windows grants
+
+On Windows, srt keeps a write grant on each session's working and temp folders after it ends, and
+that grant beats a deny inherited from a parent folder, so a later session could read an earlier
+run's files (HAL-5882). On every way a session ends (`close()`, an abort, the time limit, a failed
+open) the session runs `srt-win acl forget <folder>` on both folders. This is wrapped in one
+module, `src/kept-grants.ts`, which fails closed: only the sandbox-runtime versions in
+`testedSrtVersions` (now 0.0.81) open a session. `acl forget` checks for live sessions only with
+`--all`, not for named folders, so the module counts which folders the live sessions of this host
+use, and a folder another of them still uses is forgotten when that one closes. If forgetting
+fails, `close()` rejects naming the folder and the reason. Give
+`new SrtSandbox(machine, runner, journalFolder, { runsFolder })` the folder that holds the run
+folders, and the first `open` also forgets the kept grants inside it (sessions that crashed before
+they closed); a failure of the sweep is logged to stderr. The sweep can't see sessions of another
+host process, so give each host a runs folder of its own. While two
+sessions are open at once, srt still lets one read the other (known limit, `it.fails` in
+`fence/srt-kept-grants.windows.test.ts`).
+
 ## Exports
 
 | Export | What it is |
