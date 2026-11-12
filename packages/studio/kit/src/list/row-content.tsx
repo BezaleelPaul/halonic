@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { StatusChip } from "../status-chip/status-chip.tsx";
-import type { ListRow } from "./list-props.ts";
+import type { AnyListRow, ListColumn } from "./list-props.ts";
+import { RowColumns } from "./row-columns.tsx";
 import { Leading, MetaLine } from "./row-parts.tsx";
 
 /*
@@ -23,7 +24,7 @@ function heightClasses(phone: boolean, dense: boolean, hasMeta: boolean): string
  * The row's chip or value, or an error's `danger` chip in its place. The error chip has its dot,
  * so the state doesn't rest on colour alone.
  */
-function trailingOf(row: ListRow): ReactNode {
+function trailingOf(row: AnyListRow): ReactNode {
   return row.error === undefined ? (
     row.trailing
   ) : (
@@ -34,17 +35,30 @@ function trailingOf(row: ListRow): ReactNode {
 }
 
 export interface RowContentProps {
-  readonly row: ListRow;
+  readonly row: AnyListRow;
   readonly phone: boolean;
   readonly dense: boolean;
   /** The id of the meta line, which an unavailable row's cell names with `aria-describedby`. */
   readonly reasonId: string;
   /** A checkbox cell comes first and holds the gap, so the cell has no left padding. */
   readonly afterCheck: boolean;
+  /** The List's columns: the row lays its cells out in them. */
+  readonly columns: readonly ListColumn[] | undefined;
 }
 
 /** The main cell's inside: the icon or avatar, the title, the meta line and the trailing part. */
-export function RowContent({ row, phone, dense, reasonId, afterCheck }: RowContentProps) {
+export function RowContent({ row, phone, dense, reasonId, afterCheck, columns }: RowContentProps) {
+  if (columns !== undefined) {
+    return (
+      <RowColumns
+        row={row}
+        columns={columns}
+        phone={phone}
+        reasonId={reasonId}
+        afterCheck={afterCheck}
+      />
+    );
+  }
   const meta = row.unavailable?.reason ?? row.error?.reason ?? row.meta;
   const trailing = trailingOf(row);
   // On a phone the right edge has one job: next to a More button, the chip starts the meta line.
