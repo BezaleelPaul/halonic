@@ -192,6 +192,13 @@ export { readPackageSpec } from "./package-spec.ts";
 export { isPackageManagerVariable } from "./pin-overrides.ts";
 export { pinnedRunnerArgs } from "./pinned-args.ts";
 export {
+  type AddPluginCommand,
+  type PluginCommands,
+  type PluginCommandsHost,
+  registerPluginCommands,
+  type TrustPluginCommand,
+} from "./plugin-commands.ts";
+export {
   type PluginToolSet,
   type PluginUiContribution,
   trustedPluginTools,
