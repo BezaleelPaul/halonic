@@ -38,7 +38,9 @@ import {
   noConnectorCalls,
   RunConnectorCallRunner,
 } from "./run-connector-call-runner.ts";
+import type { RunsConnectors } from "./run-connectors.ts";
 import { RunFeed } from "./run-feed.ts";
+import { callTimer, childTimer, harnessTimer, stateTimer, toolTimer } from "./run-timer-ids.ts";
 import { StartDeadlines } from "./start-deadlines.ts";
 import { checkStartRequest, startInputOf } from "./start-request.ts";
 import { resumeTimer, UnfinishedEffects } from "./unfinished-effects.ts";
@@ -61,18 +63,6 @@ export const harnessGoneError =
 /** The `error` of a run someone cancelled; screens word the reason themselves. */
 export const cancelledError = "The run was cancelled.";
 
-/**
- * Timer ids: a model call or a harness run to carry out now, a timer a
- * state set (`set-timer`), and a child run to hear from (on the parent's
- * key). A harness call's start limits have their own (see {@link StartDeadlines}),
- * and so does a run whose effects couldn't all be carried out ({@link resumeTimer}).
- */
-const callTimer = "call:";
-const harnessTimer = "harness:";
-const stateTimer = "timer:";
-const childTimer = "child:";
-const toolTimer = "tool:";
-
 /** How a call a run waits on is carried out: a model call, or a run of the agent's harness. */
 type CallKind = "model" | "harness";
 
@@ -94,16 +84,21 @@ export class LocalRuns {
   readonly #effects: UnfinishedEffects;
   readonly #harnessCalls: LocalHarnessCalls;
   readonly #folders: RunsProposalFolders;
+  readonly #connectors: Pick<RunsConnectors, "ended"> | undefined;
   #started: Promise<void> | undefined;
   /** Set by {@link LocalRuns.close}: timers change nothing and calls record nothing from then on. */
   #closed = false;
 
-  /** @throws RangeError when a start limit in `harnesses` isn't a whole number of milliseconds of 1 or more */
+  /**
+   * @param connectors - the connectors of the runs, which a top-level run's end ends
+   * @throws RangeError when a start limit in `harnesses` isn't a whole number of milliseconds of 1 or more
+   */
   constructor(
     options: LocalRunsOptions,
     clock: Clock,
     callModel: CallModel,
     callTool: CallTool = noConnectorCalls,
+    connectors?: Pick<RunsConnectors, "ended">,
   ) {
     checkStartTimeouts(options.harnesses?.startTimeoutsMs);
     this.#options = options;
@@ -113,6 +108,7 @@ export class LocalRuns {
     this.store = new WatchedRuns(options.store, (runId) => this.#feed.notify(runId));
     this.#startDeadlines = new StartDeadlines(options.scheduler, clock);
     this.#folders = new RunsProposalFolders(this.store, options.proposalFolders);
+    this.#connectors = connectors;
     this.#builtEffects = builtEffectsOf(options);
     this.#budget = budgetCheckOf(options);
     this.#harnessCalls = new LocalHarnessCalls({
@@ -393,9 +389,9 @@ export class LocalRuns {
    * A run has just ended: the child runs it started that are still going are
    * cancelled with `childError`, all the way down. Then, when it is a
    * top-level run, its harness calls and its child runs' stop, and its
-   * proposal folder ends. It waits on those calls, so no input recorded
-   * inside a harness call may end its run or any run above it (today that
-   * is only `harness-asked`, which never does).
+   * proposal folder and its connectors end. It waits on those calls, so no
+   * input recorded inside a harness call may end its run or any run above it
+   * (today that is only `harness-asked`, which never does).
    */
   async #ended(runId: string, childError = parentEndedError): Promise<void> {
     const end = (childRunId: string) => this.#cancelOne(childRunId, childError);
@@ -403,6 +399,7 @@ export class LocalRuns {
     await this.#folders.ended(runId, (topLevelRunId) =>
       this.#harnessCalls.stopUnder(topLevelRunId),
     );
+    await this.#connectors?.ended(runId);
   }
 
   /**
