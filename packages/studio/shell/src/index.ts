@@ -364,6 +364,7 @@ export {
   type WelcomeRecentWorkspace,
 } from "./welcome/welcome-recent.tsx";
 export { WelcomeWindow, type WelcomeWindowProps } from "./welcome/welcome-window.tsx";
+export type { ItemViewProps } from "./window/item-view.tsx";
 export {
   type MountedStudioWindow,
   mountStudioWindow,
