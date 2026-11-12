@@ -209,12 +209,21 @@ describe.each(["on", "off"] as const)("an integration in the fence, Node's layer
       folders,
     );
     expect(attempts["own code"]?.outcome).toBe("refused");
-    expect(attempts["next to its folder"]?.outcome).toBe("refused");
-    // Without Node's layer on Linux, the write lands in the empty in-memory
-    // folder bubblewrap lays over the hidden home folder, which goes with the
-    // session. The real home folder stays as it was either way.
+    // Without Node's layer on Linux, the outcome of both writes depends on
+    // where the test's folders land: under `/tmp`, a hidden socket folder, a
+    // write may land in a throwaway in-memory folder bubblewrap lays over the
+    // hidden folder; elsewhere the fence refuses it. So only the real folders
+    // below are the proof there.
     const throwaway = layer === "off" && !isMac;
-    expect(attempts["home folder"]?.outcome).toBe(throwaway ? "allowed" : "refused");
+    for (const name of ["next to its folder", "home folder"]) {
+      const outcome = attempts[name]?.outcome;
+      if (throwaway) {
+        expect(["allowed", "refused"], name).toContain(outcome);
+      } else {
+        expect(outcome, name).toBe("refused");
+      }
+    }
+    // The real folders stay as they were either way.
     expect(existsSync(join(base, "planted.txt"))).toBe(false);
     expect(existsSync(join(homeFolder, ".bashrc"))).toBe(false);
     // The runner gets no write grant from Node; the fence allows its temp folder.
