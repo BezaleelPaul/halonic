@@ -121,6 +121,13 @@ export {
   type ListenerErrorHandler,
 } from "./event-bus.ts";
 export {
+  type HostSetting,
+  HostSettings,
+  type HostSettingsListener,
+  type HostSettingsOptions,
+  hostSetting,
+} from "./host-settings.ts";
+export {
   type HubWorkflow,
   hubWorkflows,
   lookUpWorkflow,
