@@ -27,24 +27,18 @@ export interface SbomDependency {
   readonly dependsOn?: readonly string[];
 }
 
-/** One installed package with its licence, as `pnpm licenses list --long --json` reports it. */
+/** One package or vendored file with its licence, for THIRD-PARTY-NOTICES.txt. */
 export interface NoticeEntry {
   readonly name: string;
+  /** Empty for a vendored file. */
   readonly versions: readonly string[];
   readonly licence: string;
   readonly author?: string;
   readonly homepage?: string;
-  /** The licence file text, when the package ships one. */
-  readonly text?: string;
-}
-
-/** One vendored file for the notices: its `vendored` entry and its licence text. */
-export interface VendoredNotice {
-  readonly name: string;
-  readonly path: string;
-  readonly licence: string;
-  readonly source: string;
-  readonly text: string;
+  /** Where a vendored file was copied from. */
+  readonly source?: string;
+  /** The text of each licence file the package ships, in file name order; empty when it ships none. */
+  readonly texts: readonly string[];
 }
 
 /** The full package name of a component: `@scope/name` or `name`. */
@@ -137,38 +131,68 @@ export function withProduct(sbom: Sbom, name: string, version: string): Sbom {
 
 const rule = "=".repeat(72);
 
+/** One part of THIRD-PARTY-NOTICES.txt: the npm packages, the Rust crates or the vendored files. */
+export interface NoticeSection {
+  readonly title: string;
+  readonly entries: readonly NoticeEntry[];
+}
+
+/** Code-point order, so a file comes out the same whatever the machine's locale. */
+export function byCodePoint(a: string, b: string): number {
+  if (a === b) {
+    return 0;
+  }
+  return a < b ? -1 : 1;
+}
+
+/** One package's block: its name, licence and details, then each licence text or a pointer to it. */
+function noticeBlock(entry: NoticeEntry, printed: Map<string, string>): string {
+  const label = [
+    entry.name,
+    ...(entry.versions.length > 0 ? [entry.versions.join(", ")] : []),
+  ].join(" ");
+  const lines = [label, `Licence: ${entry.licence}`];
+  if (entry.author !== undefined) {
+    lines.push(`Author: ${entry.author}`);
+  }
+  if (entry.homepage !== undefined) {
+    lines.push(`Homepage: ${entry.homepage}`);
+  }
+  if (entry.source !== undefined) {
+    lines.push(`Source: ${entry.source}`);
+  }
+  if (entry.texts.length === 0) {
+    lines.push("", "(This package ships no licence file. See its homepage.)");
+  }
+  for (const raw of entry.texts) {
+    const text = raw.replaceAll("\r\n", "\n").trim();
+    const first = printed.get(text);
+    if (first === undefined) {
+      printed.set(text, label);
+    }
+    lines.push("", first === undefined ? text : `Same licence text as ${first} above.`);
+  }
+  return lines.join("\n");
+}
+
 /**
- * Renders THIRD-PARTY-NOTICES.txt: one block per package, sorted, with its
- * licence text, then one block per vendored file.
+ * Renders THIRD-PARTY-NOTICES.txt: the sections in the order given, each with
+ * one block per package, sorted by name and version, with its licence texts.
+ * A text that is the same as one printed above (line endings aside) is not
+ * repeated: the block names the package it is printed under. Most crates ship
+ * the same Apache-2.0 file next to their own MIT one, so each file is compared
+ * on its own. The fixed order keeps the pointers, and the whole file, the
+ * same on every build.
  */
-export function renderNotices(
-  product: string,
-  entries: readonly NoticeEntry[],
-  vendored: readonly VendoredNotice[] = [],
-): string {
-  const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
-  const blocks = sorted.map((entry) => {
-    const lines = [`${entry.name} ${entry.versions.join(", ")}`, `Licence: ${entry.licence}`];
-    if (entry.author !== undefined) {
-      lines.push(`Author: ${entry.author}`);
-    }
-    if (entry.homepage !== undefined) {
-      lines.push(`Homepage: ${entry.homepage}`);
-    }
-    lines.push("", entry.text?.trim() ?? "(This package ships no licence file. See its homepage.)");
-    return lines.join("\n");
-  });
-  const files = [...vendored]
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .map((file) =>
-      [
-        `${file.name} (${file.path})`,
-        `Licence: ${file.licence}`,
-        `Source: ${file.source}`,
-        "",
-        file.text.trim(),
-      ].join("\n"),
+export function renderNotices(product: string, sections: readonly NoticeSection[]): string {
+  const printed = new Map<string, string>();
+  const parts = sections.flatMap((section) => {
+    const sorted = [...section.entries].sort((a, b) =>
+      byCodePoint(`${a.name}@${a.versions.join(",")}`, `${b.name}@${b.versions.join(",")}`),
     );
+    const blocks = sorted.map((entry) => noticeBlock(entry, printed));
+    return [`${section.title}\n${"-".repeat(section.title.length)}`, ...blocks];
+  });
   const header = `${product} includes the third-party software listed below.\n`;
-  return `${[header, ...blocks, ...files].join(`\n${rule}\n\n`)}\n`;
+  return `${[header, ...parts].join(`\n${rule}\n\n`)}\n`;
 }
