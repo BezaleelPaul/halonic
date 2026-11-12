@@ -11,6 +11,7 @@ import type {
   HarnessProblem,
   ModelProblem,
   ModelsLine,
+  NodeLine,
   ProviderReport,
   SandboxLine,
   WorkspaceLine,
@@ -19,7 +20,12 @@ import type { Message } from "../messages/define.ts";
 import { type DataUse, doctorMessages } from "../messages/doctor.ts";
 import { errorMessages } from "../messages/general.ts";
 import { markPart, type Phrase, phrase, plainText } from "../messages/phrase.ts";
-import { sandboxDocsLink, sandboxMessages, wsl2FolderDocs } from "../messages/sandbox.ts";
+import {
+  sandboxDocsLink,
+  sandboxMessages,
+  windowsNodeInWsl,
+  wsl2FolderDocs,
+} from "../messages/sandbox.ts";
 import { shownSize } from "../messages/size.ts";
 import type { Mark } from "./paint.ts";
 import { printable } from "./printable.ts";
@@ -62,8 +68,9 @@ interface CheckLines {
 
 /**
  * The lines of `halonic doctor`, in the order of cli-output 3.7: Workspace,
- * Models, Sandbox, Harnesses, Disk, each only when the report has it, with
- * an empty line after the heading and before the summary.
+ * Models, Sandbox, Harnesses, Node.js (HAL-6517) and Disk, each only when
+ * the report has it, with an empty line after the heading and before the
+ * summary.
  *
  * @example
  * doctorReportLines(report, { version: "0.1.0", system: "Linux x64", sandboxKind: "bubblewrap" });
@@ -74,8 +81,9 @@ export function doctorReportLines(report: DoctorReport, facts: DoctorFacts): Phr
   const checks = [
     report.workspace && workspaceCheck(report.workspace, facts.dir),
     report.models && modelsCheck(report.models),
-    sandboxCheck(report.sandbox, facts.sandboxKind),
+    sandboxCheck(report.sandbox, facts.sandboxKind, report.node),
     report.harnesses && harnessesCheck(report.harnesses),
+    report.node && nodeCheck(report.node),
     diskCheck(report.disk),
   ].filter((check) => check !== undefined);
   return [
@@ -170,20 +178,26 @@ function modelProblems(problems: readonly ModelProblem[]): Phrase[] {
   return lines;
 }
 
-/** ✓ with the kind of sandbox, or ✕ with the reason, the fix and `More:` by the reason's code. */
-function sandboxCheck(line: SandboxLine, kind: string): CheckLines {
+/**
+ * ✓ with the kind of sandbox, or ✕ with the reason, the fix and `More:` by
+ * the reason's code. With Windows' Node.js in a WSL folder, the code is
+ * `windows-node-in-wsl` whatever the sandbox's own reason, as for a refused
+ * `run`, because the fix is Node.js inside WSL (HAL-6552).
+ */
+function sandboxCheck(line: SandboxLine, kind: string, node: NodeLine | undefined): CheckLines {
   const label = doctorMessages.sandboxLabel();
   if (line.status === "ok") {
     return { status: line.status, label, lines: [doctorMessages.sandboxReady(kind).phrase] };
   }
+  const code = node?.problem === "windows-node-in-wsl" ? windowsNodeInWsl : line.reason;
   return {
     status: line.status,
     label,
     lines: [
       doctorMessages.sandboxCantStart().phrase,
-      sandboxMessages.reason(line.reason).phrase,
-      sandboxMessages.doctorFix(line.reason).phrase,
-      errorMessages.more(sandboxDocsLink(line.reason), line.reason).phrase,
+      sandboxMessages.reason(code).phrase,
+      sandboxMessages.doctorFix(code).phrase,
+      errorMessages.more(sandboxDocsLink(code), code).phrase,
     ],
   };
 }
@@ -220,6 +234,18 @@ function harnessProblem(problem: HarnessProblem): Phrase[] {
     case "failed":
       return [doctorMessages.harnessVersionFailed(problem.name, printable(problem.error)).phrase];
   }
+}
+
+/** What is wrong with the Node.js that runs Halonic, and the fix under it. */
+function nodeCheck(line: NodeLine): CheckLines {
+  const lines =
+    line.problem === "windows-node-in-wsl"
+      ? [doctorMessages.windowsNodeInWsl().phrase, doctorMessages.installNodeInWsl().phrase]
+      : [
+          doctorMessages.windowsPnpm(printable(line.pnpm)).phrase,
+          doctorMessages.installPnpmInWsl().phrase,
+        ];
+  return { status: line.status, label: doctorMessages.nodeLabel(), lines };
 }
 
 function diskCheck(line: DiskLine): CheckLines {
