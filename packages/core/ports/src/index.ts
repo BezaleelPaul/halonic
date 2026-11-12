@@ -80,6 +80,7 @@ export {
   type Harness,
   type HarnessBridge,
   type HarnessDetection,
+  type HarnessDetectOptions,
   type HarnessEvent,
   type HarnessInput,
   type HarnessRun,
@@ -170,6 +171,8 @@ export { type PortName, portVersions } from "./port-versions.ts";
 export {
   type ProgramProbe,
   type ProgramProbeResult,
+  type ProgramQuestion,
+  type ProgramSettingsFolder,
   programProbeVersion,
 } from "./program-probe.ts";
 export {
