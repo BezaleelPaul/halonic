@@ -11,5 +11,5 @@ import { printable } from "./printable.ts";
  */
 export function shellWord(path: string): string {
   const shown = printable(path);
-  return /^[\w./\\:-]+$/u.test(shown) ? shown : `"${shown}"`;
+  return /^[\w./:-]+$/u.test(shown) ? shown : `"${shown.replace(/(["$`\\])/gu, "\\$1")}"`;
 }
